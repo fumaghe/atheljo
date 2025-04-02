@@ -73,7 +73,7 @@ pipeline
       steps
       {
         sh '''
-        [ -f Makefile.tests ] && make -f Makefile.tests all-static
+        [ ! -f Makefile.tests ] || make -f Makefile.tests all-static
         '''
       }
     }
@@ -101,7 +101,7 @@ pipeline
       steps
       {
         sh '''
-        [ -f Makefile.tests ] && make -f Makefile.tests all-dynamic
+        [ ! -f Makefile.tests ] || make -f Makefile.tests all-dynamic
         '''
       }
     }
