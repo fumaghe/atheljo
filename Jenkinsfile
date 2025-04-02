@@ -86,7 +86,7 @@ pipeline
       steps
       {
         sh '''
-        sudo docker compose -f docker-compose.yaml -p avalon --env-file ./.env-staging up -d
+        sudo docker compose -p avalon -f docker-compose.yaml up -d
         '''
       }
     }
