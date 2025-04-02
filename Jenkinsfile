@@ -14,6 +14,7 @@ pipeline
     node
     {
       label 'gcp-datascience-dh1'
+      customWorkspace "/opt/jenkins/workspace/${JOB_NAME}/${BUILD_NUMBER}"
     }
   }
 
