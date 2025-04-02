@@ -1,0 +1,33 @@
+{
+  "indexes": [
+    {
+      "collectionGroup": "capacity_trends",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "hostid",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "date",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "capacity_trends",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "hostid",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "date",
+          "order": "DESCENDING"
+        }
+      ]
+    }
+  ],
+  "fieldOverrides": []
+}

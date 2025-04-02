@@ -1,0 +1,6 @@
+python/
+OCI_Firestore/
+node_modules/
+.git
+.gitignore
+docker-avalon-app.dev.dockerfile

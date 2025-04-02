@@ -1,0 +1,73 @@
+Calcolo dell’Health Score:
+
+1. Capacity:
+   - Obiettivo: Valutare lo spazio libero dello storage.
+   - Logica:
+       Se la percentuale di utilizzo (perc_used) è ≤ 55, il punteggio è 100.
+       Se perc_used > 55, il punteggio decresce linearmente fino a 0 per perc_used = 100.
+   - Formula:
+       Se perc_used ≤ 55:
+           Capacity Score = 100
+       Altrimenti:
+           Capacity Score = 100 - ((perc_used - 55) × (100 / 45))
+   - Visualizzazione:
+       In alto a destra della card "Capacity" viene mostrata la percentuale di spazio libero, calcolata come:
+           100 – perc_used
+
+2. Performance:
+   - Obiettivo: Valutare la frequenza di invio della telemetria.
+   - Logica:
+       L’ideale è che il tempo medio (avg_time) sia 5 minuti.
+       Ogni minuto di scostamento da 5 penalizza di 10 punti.
+   - Formula:
+           Performance Score = max(0, 100 - 10 × |avg_time - 5|)
+
+3. Telemetry:
+   - Obiettivo: Verificare se il sistema invia dati di telemetria.
+   - Logica:
+       Se la telemetria è attiva, il punteggio è 100; se inattiva, il punteggio è 0.
+
+4. Snapshots:
+   - Obiettivo: Valutare la presenza di snapshot.
+   - Logica:
+       Se non sono presenti snapshot (used_snap == 0), il punteggio è 0.
+       Altrimenti, il punteggio è 100 - perc_snap (limitato tra 0 e 100).
+
+5. MUP (Maximum Usage Peak):
+   - Obiettivo: Valutare l’efficienza nell’uso delle risorse.
+   - Logica:
+       Se MUP ≤ 55, il punteggio è 100; se MUP > 55, il punteggio decresce linearmente fino a 0 per MUP = 100.
+   - Formula:
+       Se MUP ≤ 55:
+           MUP Score = 100
+       Altrimenti:
+           MUP Score = 100 - ((MUP - 55) × (100 / 45))
+   - Visualizzazione:
+       In alto a destra della card "MUP" viene mostrato il valore originale di MUP.
+
+6. Utilization:
+   - Obiettivo: Fornire un indicatore combinato di Capacity e Snapshots.
+   - Logica:
+       Utilization Score = (Capacity Score + Snapshots Score) / 2
+       (Un valore elevato indica un buon utilizzo complessivo dello storage.)
+   - Nota: Questa metrica è usata a scopo informativo e non incide sul calcolo finale.
+
+7. Calcolo Finale:
+   - Pesi assegnati:
+         Capacity: 40%
+         Performance: 20%
+         Telemetry: 15%
+         Snapshots: 10%
+         MUP: 15%
+   - Formula:
+         Health Score = 0.40×Capacity Score + 0.20×Performance Score +
+                        0.15×Telemetry Score + 0.10×Snapshots Score +
+                        0.15×MUP Score
+     (Il risultato viene arrotondato all’intero più vicino.)
+
+8. Impact nelle Card:
+   - Per ogni metrica si calcola l’"impact" come:
+         Impact = Peso × (Score – 50)
+   - Questo valore indica di quanti punti la metrica contribuisce ad aumentare (se positivo)
+     o diminuire (se negativo) il punteggio finale.
+   - L’"impact" viene visualizzato con colore blu se positivo e rosso se negativo.

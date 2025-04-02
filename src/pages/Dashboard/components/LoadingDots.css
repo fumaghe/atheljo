@@ -1,0 +1,35 @@
+.loading-dots {
+    display: flex;
+    gap: 8px;
+  }
+  
+  .dot {
+    width: 10px;
+    height: 10px;
+    background-color: #22c1d4;
+    border-radius: 50%;
+    animation: dotJump 1s infinite ease-in-out;
+  }
+  
+  .dot:nth-child(1) {
+    animation-delay: 0s;
+  }
+  .dot:nth-child(2) {
+    animation-delay: 0.2s;
+  }
+  .dot:nth-child(3) {
+    animation-delay: 0.4s;
+  }
+  .dot:nth-child(4) {
+    animation-delay: 0.6s;
+  }
+  
+  @keyframes dotJump {
+    0%, 100% {
+      transform: translateY(0);
+    }
+    50% {
+      transform: translateY(-8px);
+    }
+  }
+  
