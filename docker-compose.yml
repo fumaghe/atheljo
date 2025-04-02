@@ -1,8 +1,10 @@
 services:
-  app:
+  avalon-app:
     build:
       context: .
       dockerfile: docker-avalon-app.dev.dockerfile
+    container_name: avalon-app
+    hostname: avalon-app
     ports:
       - "5000:5000"
       - "5173:5173"
