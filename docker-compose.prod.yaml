@@ -1,0 +1,23 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.prod
+    container_name: avalon-backend
+    # Load environment variables for the backend from the file
+    env_file:
+      - backend/.env
+    environment:
+      - NODE_ENV=production
+    expose:
+      - "5000"  # Exposed internally for other containers
+
+  nginx:
+    build:
+      context: .
+      dockerfile: Dockerfile.nginx
+    container_name: avalon-nginx
+    ports:
+      - "80:80"  # Map container's port 80 to host port 80
+    depends_on:
+      - backend

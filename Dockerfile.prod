@@ -1,0 +1,47 @@
+# -------------------------------
+# Stage 1: Build Stage
+# -------------------------------
+    FROM node:20-bookworm-slim as builder
+
+    # Set working directory
+    WORKDIR /app
+    
+    # Copy package files and .npmrc (if needed)
+    COPY package*.json ./
+    COPY .npmrc ./
+    
+    # Install all dependencies
+    RUN npm install --force
+    
+    # Copy the full project into the container
+    COPY . .
+    
+    # Build the frontend using Vite (creates production build in 'dist')
+    RUN npm run build
+    
+    # -------------------------------
+    # Stage 2: Production Stage for Backend
+    # -------------------------------
+    FROM node:20-bookworm-slim
+    
+    # Set working directory
+    WORKDIR /app
+    
+    # Copy package files to install only production dependencies
+    COPY package*.json ./
+    
+    # Install production-only dependencies
+    RUN npm install --production --force
+    
+    # Copy only the backend folder (assuming backend code is under 'backend')
+    COPY backend ./backend
+    
+    # Note: We do NOT copy the .env file into the image for security reasons.
+    # The .env file will be passed at runtime using docker-compose.
+    
+    # Expose the backend port
+    EXPOSE 5000
+    
+    # Start the backend server
+    CMD ["node", "backend/server.js"]
+    
