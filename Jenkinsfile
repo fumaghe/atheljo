@@ -87,7 +87,7 @@ pipeline
       steps
       {
         sh '''
-        sudo docker compose -p avalon -f docker-compose.yaml up -d
+        sudo docker compose -p avalon -f docker-compose.prod.yaml up -d
         '''
       }
     }
