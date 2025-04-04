@@ -75,10 +75,10 @@ pipeline {
           string(credentialsId: 'FIRESTORE_CREDENTIALS', variable: 'FIRESTORE_CREDENTIALS_CONTENT')
         ]) {
           sh '''
-            # Esporta le variabili d'ambiente per essere utilizzate da Docker Compose
             export BACKEND_ENV="${BACKEND_ENV}"
             export ARCHIMEDES_ENV="${ARCHIMEDES_ENV}"
-            export FIRESTORE_CREDENTIALS_CONTENT="${FIRESTORE_CREDENTIALS_CONTENT}"
+            # Codifica in base64 la stringa delle credenziali Firestore per preservare i newline
+            export FIRESTORE_CREDENTIALS_CONTENT_BASE64=$(printf "%s" "${FIRESTORE_CREDENTIALS_CONTENT}" | base64)
             # Avvia i container tramite Docker Compose
             sudo docker compose -p avalon -f docker-compose.prod.yaml up -d --force-recreate
           '''
