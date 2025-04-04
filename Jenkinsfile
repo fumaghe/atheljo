@@ -68,7 +68,6 @@ pipeline {
         branch pattern: '^((main|master|qa)$|qa(/|-).+)', comparator: "REGEXP"
       }
       steps {
-        // Recupera i segreti tramite Jenkins Credentials (tutti di tipo stringa)
         withCredentials([
           string(credentialsId: 'BACKEND_ENV_SECRET', variable: 'BACKEND_ENV'),
           string(credentialsId: 'ARCHIMEDES_ENV_SECRET', variable: 'ARCHIMEDES_ENV'),
@@ -77,8 +76,10 @@ pipeline {
           sh '''
             export BACKEND_ENV="${BACKEND_ENV}"
             export ARCHIMEDES_ENV="${ARCHIMEDES_ENV}"
-            # Codifica in base64 la stringa delle credenziali Firestore per preservare i newline
-            export FIRESTORE_CREDENTIALS_CONTENT_BASE64=$(printf "%s" "${FIRESTORE_CREDENTIALS_CONTENT}" | base64)
+            # Codifica in base64 la stringa delle credenziali Firestore per preservare newline e caratteri speciali
+            export FIRESTORE_CREDENTIALS_CONTENT_BASE64=$(echo "$FIRESTORE_CREDENTIALS_CONTENT" | base64)
+            # Debug: visualizza i primi 50 caratteri della variabile codificata
+            echo "FIRESTORE_CREDENTIALS_CONTENT_BASE64=$(echo "$FIRESTORE_CREDENTIALS_CONTENT_BASE64" | cut -c1-50)..."
             # Avvia i container tramite Docker Compose
             sudo docker compose -p avalon -f docker-compose.prod.yaml up -d --force-recreate
           '''
