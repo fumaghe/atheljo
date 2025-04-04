@@ -80,8 +80,8 @@ pipeline {
             export FIRESTORE_CREDENTIALS_CONTENT_BASE64=$(echo "$FIRESTORE_CREDENTIALS_CONTENT" | base64)
             # Debug: visualizza i primi 50 caratteri della variabile codificata
             echo "FIRESTORE_CREDENTIALS_CONTENT_BASE64=$(echo "$FIRESTORE_CREDENTIALS_CONTENT_BASE64" | cut -c1-50)..."
-            # Avvia i container tramite Docker Compose
-            sudo docker compose -p avalon -f docker-compose.prod.yaml up -d --force-recreate
+            # Avvia i container tramite Docker Compose preservando le variabili d'ambiente con sudo -E
+            sudo -E docker compose -p avalon -f docker-compose.prod.yaml up -d --force-recreate
           '''
         }
       }
