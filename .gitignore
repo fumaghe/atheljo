@@ -1,6 +1,5 @@
 # 🔐 Secrets and configs
-.env
-.env.*
+Archimedes2.0/.env
 backend/.env
 
 # 📦 Node.js
