@@ -1,5 +1,4 @@
-if ( devopsLibrary.rescheduleWhenBranchIndexing() )
-{
+if ( devopsLibrary.rescheduleWhenBranchIndexing() ) {
   return
 }
 
@@ -30,7 +29,6 @@ pipeline {
           scmInfo = checkout scm
           echo "scm: ${scmInfo}"
           echo "${scmInfo.GIT_COMMIT}"
-
           if ( scmInfo?.GIT_LOCAL_BRANCH ) {
             branchName = scmInfo.GIT_LOCAL_BRANCH
           } else if ( scmInfo?.GIT_BRANCH ) {
@@ -39,7 +37,7 @@ pipeline {
         }
       }
     }
-
+    
     stage('Clean environment before run') {
       when {
         branch pattern: '^((main|master|qa|release)$|(qa|release)(/|-).+)', comparator: "REGEXP"
@@ -51,7 +49,7 @@ pipeline {
         }
       }
     }
-
+    
     stage('Run static code tests in staging') {
       when {
         branch pattern: '^((main|master|qa)$|qa(/|-).+)', comparator: "REGEXP"
@@ -62,7 +60,7 @@ pipeline {
         '''
       }
     }
-
+    
     stage('Run containers for development') {
       when {
         branch pattern: '^((main|master|qa)$|qa(/|-).+)', comparator: "REGEXP"
@@ -71,31 +69,28 @@ pipeline {
         withCredentials([
           string(credentialsId: 'BACKEND_ENV_SECRET', variable: 'BACKEND_ENV'),
           string(credentialsId: 'ARCHIMEDES_ENV_SECRET', variable: 'ARCHIMEDES_ENV'),
-          string(credentialsId: 'FIRESTORE_CREDENTIALS', variable: 'FIRESTORE_CREDENTIALS_CONTENT')
+          file(credentialsId: 'FIRESTORE_CREDENTIALS_FILE', variable: 'FIRESTORE_CREDENTIALS_PATH')
         ]) {
           sh '''
-            # Esporta le variabili
             export BACKEND_ENV="${BACKEND_ENV}"
             export ARCHIMEDES_ENV="${ARCHIMEDES_ENV}"
-            # Codifica in base64 la stringa delle credenziali Firestore
-            export FIRESTORE_CREDENTIALS_CONTENT_BASE64=$(echo "$FIRESTORE_CREDENTIALS_CONTENT" | base64)
-            # Debug: visualizza i primi 50 caratteri della variabile codificata
-            echo "FIRESTORE_CREDENTIALS_CONTENT_BASE64=$(echo "$FIRESTORE_CREDENTIALS_CONTENT_BASE64" | cut -c1-50)..."
+            # Crea la cartella per i segreti se non esiste e copia il file dalla variabile
+            mkdir -p secrets
+            cp "$FIRESTORE_CREDENTIALS_PATH" secrets/credentials.json
             
-            # Scrivi un file temporaneo .env con le variabili necessarie
+            # (Facoltativo) Scrive un file .env temporaneo per passare altre variabili a Docker Compose
             cat <<EOF > env.tmp
 BACKEND_ENV=${BACKEND_ENV}
 ARCHIMEDES_ENV=${ARCHIMEDES_ENV}
-FIRESTORE_CREDENTIALS_CONTENT_BASE64=${FIRESTORE_CREDENTIALS_CONTENT_BASE64}
 EOF
 
-            # Avvia i container tramite Docker Compose utilizzando il file .env
+            # Avvia i container tramite Docker Compose usando il file .env
             sudo docker compose -p avalon -f docker-compose.prod.yaml --env-file env.tmp up -d --force-recreate
           '''
         }
       }
     }
-
+    
     stage('Run tests on running code in staging') {
       when {
         branch pattern: '^((main|master|qa)$|qa(/|-).+)', comparator: "REGEXP"
@@ -107,7 +102,7 @@ EOF
       }
     }
   }
-
+  
   post {
     always {
       script {
