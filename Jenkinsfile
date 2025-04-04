@@ -75,14 +75,12 @@ pipeline {
           string(credentialsId: 'FIRESTORE_CREDENTIALS', variable: 'FIRESTORE_CREDENTIALS_CONTENT')
         ]) {
           sh '''
-            # Genera il file backend/.env utilizzando il contenuto della variabile BACKEND_ENV
-            printf "%s" "${BACKEND_ENV}" > backend/.env
-            # Genera il file Archimedes2.0/.env utilizzando il contenuto della variabile ARCHIMEDES_ENV
-            printf "%s" "${ARCHIMEDES_ENV}" > Archimedes2.0/.env
-            # Genera il file delle credenziali per Firestore
-            printf "%s" "${FIRESTORE_CREDENTIALS_CONTENT}" > Archimedes2.0/credentials.json
+            # Esporta le variabili d'ambiente per essere utilizzate da Docker Compose
+            export BACKEND_ENV="${BACKEND_ENV}"
+            export ARCHIMEDES_ENV="${ARCHIMEDES_ENV}"
+            export FIRESTORE_CREDENTIALS_CONTENT="${FIRESTORE_CREDENTIALS_CONTENT}"
             # Avvia i container tramite Docker Compose
-            sudo docker compose -p avalon -f docker-compose.prod.yaml up -d
+            sudo docker compose -p avalon -f docker-compose.prod.yaml up -d --force-recreate
           '''
         }
       }

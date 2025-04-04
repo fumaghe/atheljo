@@ -1,7 +1,7 @@
 // backend/firebase.js
 import admin from 'firebase-admin';
 
-// Leggi la chiave JSON dalle variabili d'ambiente
+// Legge la chiave JSON dalle variabili d'ambiente
 const serviceAccount = JSON.parse(process.env.FIRESTORE_CREDENTIALS_CONTENT);
 
 admin.initializeApp({

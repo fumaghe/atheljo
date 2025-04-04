@@ -5,10 +5,11 @@ services:
       context: .
       dockerfile: Dockerfile.prod
     container_name: avalon-backend
-    env_file:
-      - backend/.env
     environment:
       - NODE_ENV=production
+      - BACKEND_ENV=${BACKEND_ENV}
+      - ARCHIMEDES_ENV=${ARCHIMEDES_ENV}
+      - FIRESTORE_CREDENTIALS_CONTENT=${FIRESTORE_CREDENTIALS_CONTENT}
     expose:
       - "5000"
   
