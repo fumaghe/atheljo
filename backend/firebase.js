@@ -1,6 +1,6 @@
 // backend/firebase.js
 import admin from 'firebase-admin';
-import serviceAccount from './data/credentials.json' assert { type: "json" };
+import serviceAccount from '/Archimedes2.0/credentials.json' assert { type: "json" };
 
 admin.initializeApp({
   credential: admin.credential.cert(serviceAccount)
