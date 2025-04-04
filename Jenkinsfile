@@ -13,16 +13,16 @@ pipeline {
       customWorkspace "/opt/jenkins/workspace/${JOB_NAME}/${BUILD_NUMBER}"
     }
   }
-  
+
   options {
     disableConcurrentBuilds()
     skipDefaultCheckout()
   }
-  
+
   triggers {
     pollSCM('H/10 * * * *')
   }
-  
+
   stages {
     stage('Source checkout') {
       steps {
@@ -30,7 +30,7 @@ pipeline {
           scmInfo = checkout scm
           echo "scm: ${scmInfo}"
           echo "${scmInfo.GIT_COMMIT}"
-          
+
           if ( scmInfo?.GIT_LOCAL_BRANCH ) {
             branchName = scmInfo.GIT_LOCAL_BRANCH
           } else if ( scmInfo?.GIT_BRANCH ) {
@@ -39,7 +39,7 @@ pipeline {
         }
       }
     }
-    
+
     stage('Clean environment before run') {
       when {
         branch pattern: '^((main|master|qa|release)$|(qa|release)(/|-).+)', comparator: "REGEXP"
@@ -51,7 +51,7 @@ pipeline {
         }
       }
     }
-    
+
     stage('Run static code tests in staging') {
       when {
         branch pattern: '^((main|master|qa)$|qa(/|-).+)', comparator: "REGEXP"
@@ -62,7 +62,7 @@ pipeline {
         '''
       }
     }
-    
+
     stage('Run containers for development') {
       when {
         branch pattern: '^((main|master|qa)$|qa(/|-).+)', comparator: "REGEXP"
@@ -74,19 +74,28 @@ pipeline {
           string(credentialsId: 'FIRESTORE_CREDENTIALS', variable: 'FIRESTORE_CREDENTIALS_CONTENT')
         ]) {
           sh '''
+            # Esporta le variabili
             export BACKEND_ENV="${BACKEND_ENV}"
             export ARCHIMEDES_ENV="${ARCHIMEDES_ENV}"
-            # Codifica in base64 la stringa delle credenziali Firestore per preservare newline e caratteri speciali
+            # Codifica in base64 la stringa delle credenziali Firestore
             export FIRESTORE_CREDENTIALS_CONTENT_BASE64=$(echo "$FIRESTORE_CREDENTIALS_CONTENT" | base64)
             # Debug: visualizza i primi 50 caratteri della variabile codificata
             echo "FIRESTORE_CREDENTIALS_CONTENT_BASE64=$(echo "$FIRESTORE_CREDENTIALS_CONTENT_BASE64" | cut -c1-50)..."
-            # Avvia i container tramite Docker Compose preservando le variabili d'ambiente con sudo -E
-            sudo -E docker compose -p avalon -f docker-compose.prod.yaml up -d --force-recreate
+            
+            # Scrivi un file temporaneo .env con le variabili necessarie
+            cat <<EOF > env.tmp
+BACKEND_ENV=${BACKEND_ENV}
+ARCHIMEDES_ENV=${ARCHIMEDES_ENV}
+FIRESTORE_CREDENTIALS_CONTENT_BASE64=${FIRESTORE_CREDENTIALS_CONTENT_BASE64}
+EOF
+
+            # Avvia i container tramite Docker Compose utilizzando il file .env
+            sudo docker compose -p avalon -f docker-compose.prod.yaml --env-file env.tmp up -d --force-recreate
           '''
         }
       }
     }
-    
+
     stage('Run tests on running code in staging') {
       when {
         branch pattern: '^((main|master|qa)$|qa(/|-).+)', comparator: "REGEXP"
@@ -98,14 +107,13 @@ pipeline {
       }
     }
   }
-  
+
   post {
     always {
       script {
         devopsLibrary.wsCleanup(JOB_NAME, [ keepIndexingRuns: false, buildsToKeepThreshold: 15 ])
       }
     }
-    
     success {
       script {
         if ( branchName.matches('^((main|master|qa|release)$|(nightly|qa|release)(/|-).+)') ) {
@@ -113,7 +121,6 @@ pipeline {
         }
       }
     }
-    
     failure {
       script {
         if ( branchName.matches('^((main|master|qa|release)$|(nightly|qa|release)(/|-).+)') ) {
