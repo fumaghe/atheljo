@@ -1,4 +1,3 @@
-
 if ( devopsLibrary.rescheduleWhenBranchIndexing() )
 {
   return
@@ -41,9 +40,14 @@ pipeline
           echo "scm: ${scmInfo}"
           echo "${scmInfo.GIT_COMMIT}"
 
-          if ( scmInfo?.GIT_LOCAL_BRANCH ) branchName = scmInfo.GIT_LOCAL_BRANCH
-          else
-          if ( scmInfo?.GIT_BRANCH ) branchName = scmInfo.GIT_BRANCH
+          if ( scmInfo?.GIT_LOCAL_BRANCH )
+          {
+            branchName = scmInfo.GIT_LOCAL_BRANCH
+          }
+          else if ( scmInfo?.GIT_BRANCH )
+          {
+            branchName = scmInfo.GIT_BRANCH
+          }
         }
       }
     }
@@ -73,7 +77,7 @@ pipeline
       steps
       {
         sh '''
-        [ ! -f Makefile.tests ] || make -f Makefile.tests all-static
+          [ ! -f Makefile.tests ] || make -f Makefile.tests all-static
         '''
       }
     }
@@ -86,9 +90,20 @@ pipeline
       }
       steps
       {
-        sh '''
-        sudo docker compose -p avalon -f docker-compose.prod.yaml up -d
-        '''
+        // Utilizzo di withCredentials per generare dinamicamente i file .env
+        withCredentials([
+          string(credentialsId: 'BACKEND_ENV_SECRET', variable: 'BACKEND_SECRET'),
+          string(credentialsId: 'ARCHIMEDES_ENV_SECRET', variable: 'ARCHIMEDES_SECRET')
+        ]) {
+          sh '''
+            # Genera il file .env per il backend con le variabili necessarie
+            echo "PASSWORD=${BACKEND_SECRET}" > backend/.env
+            # Genera il file .env per Archimedes2.0 se necessario
+            echo "PASSWORD=${ARCHIMEDES_SECRET}" > Archimedes2.0/.env
+            # Avvia i container tramite Docker Compose
+            sudo docker compose -p avalon -f docker-compose.prod.yaml up -d
+          '''
+        }
       }
     }
 
@@ -101,7 +116,7 @@ pipeline
       steps
       {
         sh '''
-        [ ! -f Makefile.tests ] || make -f Makefile.tests all-dynamic
+          [ ! -f Makefile.tests ] || make -f Makefile.tests all-dynamic
         '''
       }
     }
