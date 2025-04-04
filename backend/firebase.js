@@ -1,6 +1,8 @@
 // backend/firebase.js
 import admin from 'firebase-admin';
-import serviceAccount from '/Archimedes2.0/credentials.json' assert { type: "json" };
+
+// Leggi la chiave JSON dalle variabili d'ambiente
+const serviceAccount = JSON.parse(process.env.FIRESTORE_CREDENTIALS_CONTENT);
 
 admin.initializeApp({
   credential: admin.credential.cert(serviceAccount)
