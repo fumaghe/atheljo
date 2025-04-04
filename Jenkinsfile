@@ -68,19 +68,19 @@ pipeline {
         branch pattern: '^((main|master|qa)$|qa(/|-).+)', comparator: "REGEXP"
       }
       steps {
-        // Recupera i segreti salvati in Jenkins tramite le credenziali
+        // Recupera i segreti tramite Jenkins Credentials (tutti di tipo stringa)
         withCredentials([
           string(credentialsId: 'BACKEND_ENV_SECRET', variable: 'BACKEND_ENV'),
           string(credentialsId: 'ARCHIMEDES_ENV_SECRET', variable: 'ARCHIMEDES_ENV'),
-          file(credentialsId: 'FIRESTORE_CREDENTIALS', variable: 'FIRESTORE_CREDENTIALS_FILE')
+          string(credentialsId: 'FIRESTORE_CREDENTIALS', variable: 'FIRESTORE_CREDENTIALS_CONTENT')
         ]) {
           sh '''
-            # Genera il file backend/.env usando il contenuto della variabile BACKEND_ENV
+            # Genera il file backend/.env utilizzando il contenuto della variabile BACKEND_ENV
             printf "%s" "${BACKEND_ENV}" > backend/.env
-            # Genera il file Archimedes2.0/.env usando il contenuto della variabile ARCHIMEDES_ENV
+            # Genera il file Archimedes2.0/.env utilizzando il contenuto della variabile ARCHIMEDES_ENV
             printf "%s" "${ARCHIMEDES_ENV}" > Archimedes2.0/.env
-            # Copia il file delle credenziali per Firestore nella directory di Archimedes2.0
-            cp ${FIRESTORE_CREDENTIALS_FILE} Archimedes2.0/credentials.json
+            # Genera il file delle credenziali per Firestore
+            printf "%s" "${FIRESTORE_CREDENTIALS_CONTENT}" > Archimedes2.0/credentials.json
             # Avvia i container tramite Docker Compose
             sudo docker compose -p avalon -f docker-compose.prod.yaml up -d
           '''
