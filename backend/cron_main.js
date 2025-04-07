@@ -13,20 +13,20 @@ const __dirname = path.dirname(__filename);
 // Costruiamo il percorso al file main.py
 const mainPyPath = path.join(__dirname, '..', 'Archimedes2.0', 'main.py');
 
-// Impostiamo il working directory in cui eseguire main.py (cioè la cartella Archimedes2.0)
+// Impostiamo il working directory in cui eseguire main.py (cartella Archimedes2.0)
 const workingDir = path.join(__dirname, '..', 'Archimedes2.0');
 
 // Definiamo il percorso per il file .env
 const envFilePath = path.join(workingDir, '.env');
 
-// Creazione dinamica del file .env utilizzando il contenuto salvato nel secret (ARCHIMEDES_ENV)
-if (process.env.ARCHIMEDES_ENV) {
-  // Sostituisce le sequenze "\n" (letterali) con veri caratteri di newline
-  const envContent = process.env.ARCHIMEDES_ENV.replace(/\\n/g, "\n");
+// Creazione dinamica del file .env utilizzando il contenuto decodificato dal secret
+if (process.env.ARCHIMEDES_ENV_B64) {
+  // Decodifica il contenuto Base64 per ottenere le newline originali
+  const envContent = Buffer.from(process.env.ARCHIMEDES_ENV_B64, 'base64').toString('utf-8');
   fs.writeFileSync(envFilePath, envContent);
   console.log(`[CRON_MAIN] .env file created at ${envFilePath}`);
 } else {
-  console.warn('[CRON_MAIN] ARCHIMEDES_ENV is not defined!');
+  console.warn('[CRON_MAIN] ARCHIMEDES_ENV_B64 is not defined!');
 }
 
 // Pianifica l'esecuzione periodica di main.py ogni 3 minuti

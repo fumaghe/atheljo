@@ -72,18 +72,18 @@ pipeline {
           file(credentialsId: 'FIRESTORE_CREDENTIALS_FILE', variable: 'FIRESTORE_CREDENTIALS_PATH')
         ]) {
           sh '''
-            # Leggi il contenuto dei file dei secret per BACKEND e ARCHIMEDES,
-            # usando le doppie virgolette per preservare le newline
+            # Leggi il contenuto dei file dei secret per BACKEND e ARCHIMEDES
             export BACKEND_ENV="$(cat "$BACKEND_ENV_PATH")"
-            export ARCHIMEDES_ENV="$(cat "$ARCHIMEDES_ENV_PATH")"
+            # Codifica in Base64 per preservare le newline
+            export ARCHIMEDES_ENV_B64="$(base64 "$ARCHIMEDES_ENV_PATH")"
             
-            # Estrai EMAIL_PASSWORD e EMAIL_USER dal file dei secret (BACKEND_ENV_SECRET)
+            # Estrai EMAIL_PASSWORD e EMAIL_USER dal file dei secret
             export EMAIL_PASSWORD="$(grep '^EMAIL_PASSWORD=' "$BACKEND_ENV_PATH" | cut -d'=' -f2-)"
             export EMAIL_USER="$(grep '^DEFAULT_ADMIN_EMAIL=' "$BACKEND_ENV_PATH" | cut -d'=' -f2-)"
             
-            # Per debug (attenzione: non loggare le credenziali in produzione)
+            # Per debug (attenzione: non loggare credenziali in produzione)
             echo "BACKEND_ENV=$BACKEND_ENV"
-            echo "ARCHIMEDES_ENV=$ARCHIMEDES_ENV"
+            echo "ARCHIMEDES_ENV_B64=$ARCHIMEDES_ENV_B64"
             echo "EMAIL_USER=$EMAIL_USER"
             echo "EMAIL_PASSWORD length: $(echo -n "$EMAIL_PASSWORD" | wc -c)"
             
@@ -91,8 +91,9 @@ pipeline {
             mkdir -p secrets
             cp "$FIRESTORE_CREDENTIALS_PATH" secrets/credentials.json
             
-            # Scrive un file env.tmp preservando le newline per Docker Compose
-            printf "BACKEND_ENV=%s\nARCHIMEDES_ENV=%s\nEMAIL_PASSWORD=%s\nEMAIL_USER=%s\n" "$BACKEND_ENV" "$ARCHIMEDES_ENV" "$EMAIL_PASSWORD" "$EMAIL_USER" > env.tmp
+            # Scrive il file env.tmp per Docker Compose
+            # Nota: le variabili saranno passate al container tramite il file env.tmp
+            printf "BACKEND_ENV=%s\nARCHIMEDES_ENV_B64=%s\nEMAIL_PASSWORD=%s\nEMAIL_USER=%s\n" "$BACKEND_ENV" "$ARCHIMEDES_ENV_B64" "$EMAIL_PASSWORD" "$EMAIL_USER" > env.tmp
             
             # Avvia i container tramite Docker Compose usando il file env.tmp
             sudo docker compose -p avalon -f docker-compose.prod.yaml --env-file env.tmp up -d --force-recreate
