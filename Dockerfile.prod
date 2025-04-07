@@ -34,7 +34,7 @@
     COPY Archimedes2.0/requirements.txt ./Archimedes2.0/requirements.txt
     
     # Installa le dipendenze Python necessarie usando il requirements.txt
-    RUN pip install -r Archimedes2.0/requirements.txt
+    RUN pip install --break-system-packages -r Archimedes2.0/requirements.txt
     
     # Copy package files to install only production dependencies for Node.js
     COPY package*.json ./
