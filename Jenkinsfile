@@ -72,7 +72,7 @@ pipeline {
           file(credentialsId: 'FIRESTORE_CREDENTIALS_FILE', variable: 'FIRESTORE_CREDENTIALS_PATH')
         ]) {
           sh '''
-            # Leggi il contenuto dei file dei secret e assegnalo a variabili d'ambiente
+            # Leggi il contenuto dei file dei secret e assegna le variabili d'ambiente
             export BACKEND_ENV=$(cat "$BACKEND_ENV_PATH")
             export ARCHIMEDES_ENV=$(cat "$ARCHIMEDES_ENV_PATH")
             
@@ -80,13 +80,13 @@ pipeline {
             mkdir -p secrets
             cp "$FIRESTORE_CREDENTIALS_PATH" secrets/credentials.json
             
-            # Scrive un file env.tmp che Docker Compose userà per impostare le environment variables
-            cat <<EOF > env.tmp
-        BACKEND_ENV=${BACKEND_ENV}
-        ARCHIMEDES_ENV=${ARCHIMEDES_ENV}
-        EOF
+            # Scrive un file env.tmp senza spazi iniziali per Docker Compose
+cat <<EOF > env.tmp
+BACKEND_ENV=${BACKEND_ENV}
+ARCHIMEDES_ENV=${ARCHIMEDES_ENV}
+EOF
 
-            # Avvia i container tramite Docker Compose usando il file .env
+            # Avvia i container tramite Docker Compose usando il file env.tmp
             sudo docker compose -p avalon -f docker-compose.prod.yaml --env-file env.tmp up -d --force-recreate
           '''
         }
