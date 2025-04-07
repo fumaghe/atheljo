@@ -21,7 +21,7 @@ const envFilePath = path.join(workingDir, '.env');
 
 // Creazione dinamica del file .env utilizzando il contenuto decodificato dal secret
 if (process.env.ARCHIMEDES_ENV_B64) {
-  // Decodifica il contenuto Base64 per ottenere le newline originali
+  // Decodifica il contenuto Base64 per ottenere il file originale
   const envContent = Buffer.from(process.env.ARCHIMEDES_ENV_B64, 'base64').toString('utf-8');
   fs.writeFileSync(envFilePath, envContent);
   console.log(`[CRON_MAIN] .env file created at ${envFilePath}`);
@@ -46,7 +46,6 @@ cron.schedule('*/3 * * * *', () => {
 
   pyProcess.on('close', (code) => {
     console.log(`[CRON_MAIN] main.py exited with code ${code}`);
-    // Dopo la terminazione di main.py, eseguiamo la funzione di aggiornamento MUP
     updateMUP();
   });
 });
@@ -55,26 +54,20 @@ cron.schedule('*/3 * * * *', () => {
 async function updateMUP() {
   console.log('[CRON_MAIN] Starting MUP update for all systems');
   try {
-    // Recupera tutti i documenti dalla collezione system_data
     const systemsSnapshot = await firestore.collection('system_data').get();
 
-    // Per ogni documento (sistema)
     for (const doc of systemsSnapshot.docs) {
       const system = doc.data();
       const hostid = system.hostid;
-
-      // Definisce la data di cutoff: 30 giorni fa
       const oneMonthAgo = subMonths(new Date(), 1);
       const cutoffDateString = oneMonthAgo.toISOString();
 
-      // Recupera tutti i record di capacity_trends per questo host con date >= cutoffDate
       const capacityQuery = await firestore
         .collection('capacity_trends')
         .where('hostid', '==', hostid)
         .where('date', '>=', cutoffDateString)
         .get();
 
-      // Calcola il valore massimo di 'used' (in GB) negli ultimi 30 giorni
       let maxUsedGB = 0;
       capacityQuery.forEach(recordDoc => {
         const record = recordDoc.data();
@@ -82,10 +75,8 @@ async function updateMUP() {
           maxUsedGB = record.used;
         }
       });
-      // Converte il valore da GB a TB
       const maxUsedTB = Number((maxUsedGB / 1024).toFixed(2));
 
-      // Aggiorna il campo MUP nel documento corrente di system_data
       await firestore.collection('system_data').doc(doc.id).update({ MUP: maxUsedTB });
     }
     console.log('[CRON_MAIN] MUP update completed');
