@@ -74,7 +74,7 @@ pipeline {
           sh '''
             # Leggi il contenuto dei file dei secret per BACKEND e ARCHIMEDES
             export BACKEND_ENV="$(cat "$BACKEND_ENV_PATH")"
-            # Codifica in Base64 il file del secret per preservare le newline
+            # Codifica in Base64 per preservare le newline
             export ARCHIMEDES_ENV_B64="$(base64 "$ARCHIMEDES_ENV_PATH")"
             
             # Estrai EMAIL_PASSWORD e EMAIL_USER dal file dei secret
@@ -141,4 +141,3 @@ pipeline {
     }
   }
 }
-  
