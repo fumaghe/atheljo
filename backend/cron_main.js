@@ -1,4 +1,3 @@
-// backend/cron_main.js
 import cron from 'node-cron';
 import path from 'path';
 import { spawn } from 'child_process';
@@ -16,7 +15,10 @@ const mainPyPath = path.join(__dirname, '..', 'Archimedes2.0', 'main.py');
 // Impostiamo il working directory in cui eseguire main.py (cioè la cartella Archimedes2.0)
 const workingDir = path.join(__dirname, '..', 'Archimedes2.0');
 
-// Creazione dinamica del file .env utilizzando il contenuto salvato nel secret (ARCHIMEDES_ENV_SECRET)
+// Definiamo il percorso per il file .env
+const envFilePath = path.join(workingDir, '.env');
+
+// Creazione dinamica del file .env utilizzando il contenuto salvato nel secret (ARCHIMEDES_ENV)
 if (process.env.ARCHIMEDES_ENV) {
   // Sostituisce le sequenze "\n" con veri caratteri di newline
   const envContent = process.env.ARCHIMEDES_ENV.replace(/\\n/g, "\n");
@@ -25,6 +27,28 @@ if (process.env.ARCHIMEDES_ENV) {
 } else {
   console.warn('[CRON_MAIN] ARCHIMEDES_ENV is not defined!');
 }
+
+// Resto del codice in cron_main.js...
+cron.schedule('*/3 * * * *', () => {
+  console.log('[CRON_MAIN] Starting main.py with 1 cycle');
+  
+  // Avvia main.py con il parametro --cycles 1, impostando il working directory
+  const pyProcess = spawn('python3', [mainPyPath, '--cycles', '1'], { cwd: workingDir });
+
+  pyProcess.stdout.on('data', (data) => {
+    console.log(`[CRON_MAIN] STDOUT: ${data}`);
+  });
+
+  pyProcess.stderr.on('data', (data) => {
+    console.error(`[CRON_MAIN] STDERR: ${data}`);
+  });
+
+  pyProcess.on('close', (code) => {
+    console.log(`[CRON_MAIN] main.py exited with code ${code}`);
+    // Dopo la terminazione di main.py, eseguiamo la funzione di aggiornamento MUP
+    updateMUP();
+  });
+});
 
 async function updateMUP() {
   console.log('[CRON_MAIN] Starting MUP update for all systems');
@@ -67,24 +91,3 @@ async function updateMUP() {
     console.error('[CRON_MAIN] Error during MUP update:', error);
   }
 }
-
-cron.schedule('*/3 * * * *', () => {
-  console.log('[CRON_MAIN] Starting main.py with 1 cycle');
-  
-  // Avvia main.py con il parametro --cycles 1, impostando il working directory
-  const pyProcess = spawn('python3', [mainPyPath, '--cycles', '1'], { cwd: workingDir });
-
-  pyProcess.stdout.on('data', (data) => {
-    console.log(`[CRON_MAIN] STDOUT: ${data}`);
-  });
-
-  pyProcess.stderr.on('data', (data) => {
-    console.error(`[CRON_MAIN] STDERR: ${data}`);
-  });
-
-  pyProcess.on('close', (code) => {
-    console.log(`[CRON_MAIN] main.py exited with code ${code}`);
-    // Dopo la terminazione di main.py, eseguiamo la funzione di aggiornamento MUP
-    updateMUP();
-  });
-});
