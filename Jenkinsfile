@@ -72,15 +72,16 @@ pipeline {
           file(credentialsId: 'FIRESTORE_CREDENTIALS_FILE', variable: 'FIRESTORE_CREDENTIALS_PATH')
         ]) {
           sh '''
-            # Leggi il contenuto dei file dei secret per BACKEND e ARCHIMEDES
-            export BACKEND_ENV="$(awk '{printf "%s\\n", $0}' "$BACKEND_ENV_PATH")"
-            export ARCHIMEDES_ENV="$(awk '{printf "%s\\n", $0}' "$ARCHIMEDES_ENV_PATH")"
+            # Leggi il contenuto dei file dei secret per BACKEND e ARCHIMEDES,
+            # usando le doppie virgolette per preservare le newline
+            export BACKEND_ENV="$(cat "$BACKEND_ENV_PATH")"
+            export ARCHIMEDES_ENV="$(cat "$ARCHIMEDES_ENV_PATH")"
             
-            # Estrai EMAIL_PASSWORD e EMAIL_USER dal file BACKEND_ENV_SECRET
+            # Estrai EMAIL_PASSWORD e EMAIL_USER dal file dei secret (BACKEND_ENV_SECRET)
             export EMAIL_PASSWORD="$(grep '^EMAIL_PASSWORD=' "$BACKEND_ENV_PATH" | cut -d'=' -f2-)"
             export EMAIL_USER="$(grep '^DEFAULT_ADMIN_EMAIL=' "$BACKEND_ENV_PATH" | cut -d'=' -f2-)"
             
-            # Per debug (attenzione: non loggare in produzione le credenziali)
+            # Per debug (attenzione: non loggare le credenziali in produzione)
             echo "BACKEND_ENV=$BACKEND_ENV"
             echo "ARCHIMEDES_ENV=$ARCHIMEDES_ENV"
             echo "EMAIL_USER=$EMAIL_USER"

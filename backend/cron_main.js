@@ -6,6 +6,7 @@ import { subMonths } from 'date-fns';
 import fs from 'fs';
 import firestore from './firebase.js';
 
+// Imposta __filename e __dirname per i moduli ES
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -20,7 +21,7 @@ const envFilePath = path.join(workingDir, '.env');
 
 // Creazione dinamica del file .env utilizzando il contenuto salvato nel secret (ARCHIMEDES_ENV)
 if (process.env.ARCHIMEDES_ENV) {
-  // Sostituisce le sequenze "\n" con veri caratteri di newline
+  // Sostituisce le sequenze "\n" (letterali) con veri caratteri di newline
   const envContent = process.env.ARCHIMEDES_ENV.replace(/\\n/g, "\n");
   fs.writeFileSync(envFilePath, envContent);
   console.log(`[CRON_MAIN] .env file created at ${envFilePath}`);
@@ -28,7 +29,7 @@ if (process.env.ARCHIMEDES_ENV) {
   console.warn('[CRON_MAIN] ARCHIMEDES_ENV is not defined!');
 }
 
-// Resto del codice in cron_main.js...
+// Pianifica l'esecuzione periodica di main.py ogni 3 minuti
 cron.schedule('*/3 * * * *', () => {
   console.log('[CRON_MAIN] Starting main.py with 1 cycle');
   
@@ -50,6 +51,7 @@ cron.schedule('*/3 * * * *', () => {
   });
 });
 
+// Funzione per aggiornare MUP per tutti i sistemi
 async function updateMUP() {
   console.log('[CRON_MAIN] Starting MUP update for all systems');
   try {
