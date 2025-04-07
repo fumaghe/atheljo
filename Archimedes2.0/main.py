@@ -18,7 +18,7 @@ class Main(BaseModel):
     directory: str = Field(default=os.getcwd(), description="Main directory of the project")
     env_file_path: str = Field(default_factory=lambda: os.path.join(os.getcwd(), ".env"),
                                  description="Path to the .env file")
-    config: dict = Field(default_factory=lambda: dotenv_values(os.path.join(os.getcwd(), ".env")), 
+    config: dict = Field(default_factory=lambda: dotenv_values(os.path.join(os.getcwd(), ".env")),
                           description="Configuration values from the .env file")
     
     def run(self):
@@ -29,7 +29,7 @@ class Main(BaseModel):
         self.config = dotenv_values(self.env_file_path)
         logging.debug("Configurazione letta dal file {}: {}".format(self.env_file_path, self.config))
         
-        # Per ulteriore controllo, logga il contenuto grezzo del file .env
+        # Log del contenuto grezzo del file .env per verificare la formattazione
         try:
             with open(self.env_file_path, "r") as f:
                 env_file_content = f.read()
@@ -41,7 +41,6 @@ class Main(BaseModel):
         db_type = self.config.get("DATABASE_TYPE")
         logging.info("DATABASE_TYPE letto: {}".format(db_type))
         
-        # Se DATABASE_TYPE non è definito, non possiamo procedere correttamente
         if db_type is None:
             logging.error("DATABASE_TYPE non è definito nel file .env!")
         
