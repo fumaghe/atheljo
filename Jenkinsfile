@@ -74,14 +74,14 @@ pipeline {
           sh '''
             # Leggi il contenuto dei file dei secret per BACKEND e ARCHIMEDES
             export BACKEND_ENV="$(cat "$BACKEND_ENV_PATH")"
-            # Codifica in Base64 per preservare le newline
-            export ARCHIMEDES_ENV_B64="$(base64 "$ARCHIMEDES_ENV_PATH")"
+            # Codifica in Base64 in formato one-line per preservare le newline
+            export ARCHIMEDES_ENV_B64="$(base64 -w 0 "$ARCHIMEDES_ENV_PATH")"
             
             # Estrai EMAIL_PASSWORD e EMAIL_USER dal file dei secret
             export EMAIL_PASSWORD="$(grep '^EMAIL_PASSWORD=' "$BACKEND_ENV_PATH" | cut -d'=' -f2-)"
             export EMAIL_USER="$(grep '^DEFAULT_ADMIN_EMAIL=' "$BACKEND_ENV_PATH" | cut -d'=' -f2-)"
             
-            # Debug: stampa la prima linea di ARCHIMEDES_ENV_B64
+            # Debug: stampa la prima parte di ARCHIMEDES_ENV_B64
             echo "DEBUG: ARCHIMEDES_ENV_B64=$(echo "$ARCHIMEDES_ENV_B64" | head -n 1)"
             
             # Crea la cartella per i segreti se non esiste e copia il file di Firestore
