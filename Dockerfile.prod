@@ -23,25 +23,27 @@
     # Stage 2: Production Stage for Backend
     # -------------------------------
     FROM node:20-bookworm-slim
-    
+
     # Set working directory
     WORKDIR /app
     
-    # Copy package files to install only production dependencies
+    # Installa Python (crea il symlink python -> python3)
+    RUN apt-get update && apt-get install -y python-is-python3
+    
+    # Copia i package files per installare le dipendenze di produzione
     COPY package*.json ./
     
-    # Install production-only dependencies
+    # Installa solo le dipendenze di produzione
     RUN npm install --production --force
     
-    # Copy only the backend folder (assuming backend code is under 'backend')
+    # Copia solo il backend
     COPY backend ./backend
     
-    # Note: We do NOT copy the .env file into the image for security reasons.
-    # The .env file will be passed at runtime using docker-compose.
-    
-    # Expose the backend port
+    # Esponi la porta del backend
     EXPOSE 5000
     
-    # Start the backend server
+    # Avvia il server backend
     CMD ["node", "backend/server.js"]
+        
+        
     
