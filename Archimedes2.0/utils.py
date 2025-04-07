@@ -1,7 +1,6 @@
 import os
 import shutil
 import pandas as pd
-# import fireducks.pandas as pd
 from pydantic import BaseModel, Field
 from pprint import pprint
 from icecream import ic
@@ -20,7 +19,7 @@ TIMEFRAME_HOURS = 4
 
 #### General use decorators and functions
 def format_decimal_places(precision: int = DECIMAL_PRECISION):
-    """ Decorator to set the number of decimal places for int or float"""
+    """ Decorator to set the number of decimal places for int or float """
     def deco(func):
         def wrapper(*args, **kwargs):
             result = func(*args, **kwargs)
@@ -31,7 +30,7 @@ def format_decimal_places(precision: int = DECIMAL_PRECISION):
     return deco
 
 def convert_to_percentage(func: Callable) -> Callable:
-    """ Decorator to convert a number to a percentage"""
+    """ Decorator to convert a number to a percentage """
     def wrapper(*args, **kwargs):
         result = func(*args, **kwargs)
         if isinstance(result, (int, float)):  # Check that the value is actually a number
@@ -126,40 +125,55 @@ def empty_dir(dir_path: str):
         for f in os.listdir(dir_path):
             os.remove(os.path.join(dir_path, f))
 
-### Function for environment variables
-def change_last_id(new_last_id, env_path: str) -> int:
+### Funzioni per gestire il valore LAST_ID tramite file last_id.txt
+def read_last_id(file_path: str) -> str:
     """
-    Updates the LAST_ID value in the .env file with new_last_id.
+    Legge il valore di LAST_ID dal file specificato.
+    Se si verifica un errore, restituisce "0".
     """
-    load_dotenv(env_path)
-    current_value = os.getenv("LAST_ID")
-    new_value = str(new_last_id)
-    set_key(env_path, "LAST_ID", new_value)
-    logging.info(f"Updated LAST_ID from {current_value} to {new_value} in .env file")
-    return new_last_id
+    try:
+        with open(file_path, "r") as f:
+            last_id = f.read().strip()
+        logging.info(f"Read LAST_ID={last_id} from {file_path}")
+        return last_id
+    except Exception as e:
+        logging.error(f"Error reading LAST_ID from {file_path}: {e}")
+        return "0"
+
+def update_last_id(new_last_id, file_path: str) -> str:
+    """
+    Aggiorna il valore di LAST_ID nel file specificato con new_last_id.
+    """
+    try:
+        with open(file_path, "w") as f:
+            f.write(str(new_last_id))
+        logging.info(f"Updated LAST_ID in {file_path} to {new_last_id}")
+        return str(new_last_id)
+    except Exception as e:
+        logging.error(f"Error updating LAST_ID in {file_path}: {e}")
+        return str(new_last_id)
 
 #### Logging functions
 def activate_logger(config_values: dict, directory_path: str):
     """
-    Activate logging for the application.
-    Configurations are pulled from the .env file.
-    By default, logs are printed to the terminal and saved to a .log file.
+    Attiva il logger per l'applicazione.
+    Le configurazioni vengono lette dal file .env.
     """
-    # Clear any existing handlers
+    # Rimuove eventuali handler esistenti
     logging.getLogger().handlers.clear()
 
-    # Read configurations from .env file and configure logging level
+    # Imposta il livello di logging
     logging_level = config_values.get("LOGGING_LEVEL", "INFO").upper()
-    level = getattr(logging, logging_level, logging.INFO)  # Default to INFO if invalid level is provided
+    level = getattr(logging, logging_level, logging.INFO)  # Default a INFO se il livello non è valido
 
-    # Set up the basic configuration for logging
+    # Configurazione di base per il logging
     logging.basicConfig(
         level=level,
         format="%(asctime)s - %(levelname)s - %(message)s",
         handlers=[]
     )
 
-    # Add a StreamHandler to log to the terminal
+    # Aggiunge uno StreamHandler per loggare sul terminale
     stream_handler = logging.StreamHandler()
     stream_handler.setLevel(level)
     stream_handler.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
@@ -167,35 +181,27 @@ def activate_logger(config_values: dict, directory_path: str):
 
     save_logs = string_to_bool(config_values.get("SAVE_LOGS", "False"))
 
-    # Check if logs should be saved to a file
     if save_logs:
-        log_file_path = create_logs(config_values, directory_path)  # Create the log file and directory
-        # Add a FileHandler to log to the file
+        log_file_path = create_logs(config_values, directory_path)
         file_handler = logging.FileHandler(log_file_path)
         file_handler.setLevel(level)
         file_handler.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
-        # Log a message to confirm file logging is enabled
-
-    # Log a message to confirm the logger is activated
+        logging.getLogger().addHandler(file_handler)
 
 def create_logs(config: dict, directory: str) -> str:
     """
-    Create a directory to store logs and set up the log file.
-    The directory name is "archimedes-analyzer-{timestamp}".
+    Crea una directory per i log e configura il file di log.
     """
-    # Create the directory if it doesn't exist
     log_dir = config.get("LOG_DIR", "logs")
     log_dir_path = os.path.join(directory, log_dir)
     create_dir(log_dir_path)
 
-    # Generate timestamp for the directory name
     timestamp = datetime_to_string(datetime.now(), False)
     log_file_name = f"archimedes-analyzer-{timestamp}.log"
     log_file_path = os.path.join(log_dir_path, log_file_name)
 
-    # Create the log file (empty file)
     with open(log_file_path, "w") as f:
-        pass  # Just create the file
+        pass
 
     return log_file_path
 
@@ -233,7 +239,6 @@ def graph_canvas(x_label: str, y_label: str, title: str, show_legend: bool, show
 def save_graph(dir_path: str, format: Literal["png", "jpg", "svg", "pdf"] = "png"):
     file_path = os.path.join(dir_path, f"graph.{format}")
     plt.savefig(file_path, format=format)
-    pass
 
 def write_results(results, file_path: str, save_format: Literal["csv", "json", "excel", "parquet"] = "csv"):
     results_type = type(results)

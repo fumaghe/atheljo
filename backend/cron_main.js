@@ -58,11 +58,11 @@ async function updateMUP() {
   }
 }
 
-cron.schedule('*/5 * * * *', () => {
+cron.schedule('*/3 * * * *', () => {
   console.log('[CRON_MAIN] Starting main.py with 1 cycle');
   
   // Avvia main.py con il parametro --cycles 2, forzando il working directory
-  const pyProcess = spawn('python', [mainPyPath, '--cycles', '1'], { cwd: workingDir });
+  const pyProcess = spawn('python3', [mainPyPath, '--cycles', '1'], { cwd: workingDir });
 
   pyProcess.stdout.on('data', (data) => {
     console.log(`[CRON_MAIN] STDOUT: ${data}`);

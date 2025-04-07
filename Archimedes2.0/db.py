@@ -2,7 +2,6 @@ import mysql.connector
 import oracledb as oci
 import os
 import pandas as pd
-# import fireducks.pandas as pd
 from pydantic import BaseModel, Field
 import psycopg2
 from dotenv import dotenv_values
@@ -78,6 +77,7 @@ class MerlinDB(BaseModel):
 
             return db_conn
         except Exception as e:
+            logging.error(f"Error connecting to Oracle database: {e}")
             return None
     
     def connect_to_AlloyDB(self):
@@ -88,7 +88,6 @@ class MerlinDB(BaseModel):
         """ Retrieves all necessary data joining client id from Merlin database."""
         cursor = db_conn.cursor()
         try:
-
             cursor.execute("SELECT u.name AS company, s.hostid, s.hostname, s.version, "
                            "s.insertdate AS first_date, s.last_stats_date AS last_date "
                            "FROM merlin.users AS u "
@@ -96,7 +95,6 @@ class MerlinDB(BaseModel):
                            "ON u.registration_number COLLATE utf8mb4_0900_ai_ci = s.client_ide COLLATE utf8mb4_0900_ai_ci "
                            "ORDER BY u.name "
                            "LIMIT 1000;")
-
             rows = cursor.fetchall()
             columns = [desc[0] for desc in cursor.description]
             df_companies_data = pd.DataFrame(rows, columns=columns)
@@ -161,11 +159,12 @@ class MerlinDB(BaseModel):
                 self.debug_active = True
 
 
-def create_connection(config: dict) -> MerlinDB:
-    """ Defines the connection to Merlin database."""
+def create_connection(config: dict, last_id_path: str) -> (MerlinDB, Any, str):
+    """ Defines the connection to Merlin database using LAST_ID from the file. """
     db_type = config.get("DATABASE_TYPE").lower()
     environment = config.get("ENVIRONMENT").lower()
-    last_id = config.get("LAST_ID")
+    # Legge il valore di LAST_ID dal file
+    last_id = utils.read_last_id(last_id_path)
     match db_type:
         case "oci" | "alloydb" | "mysql":
             merlin_db = MerlinDB(environment=environment, db_type=db_type)
@@ -177,14 +176,14 @@ def create_connection(config: dict) -> MerlinDB:
             raise ValueError("Fatal error: Database connection not defined")
 
 
-def connect_merlindb(config: dict, env_path: str):
+def connect_merlindb(config: dict, last_id_path: str = "last_id.txt"):
     db_conn = None
     companies_df, telemetry_df = None, None
     try: 
-        merlin_db, db_conn, last_id = create_connection(config)
+        merlin_db, db_conn, last_id = create_connection(config, last_id_path)
         companies_df = merlin_db.get_companies_data(db_conn)
         telemetry_df, new_last_id = merlin_db.update_telemetry(db_conn, last_id)
-        utils.change_last_id(new_last_id, env_path)
+        utils.update_last_id(new_last_id, last_id_path)
     except Exception as e:
         logging.error(f"Error connecting to Merlin database: {e}")
     finally:
@@ -200,7 +199,6 @@ def debug_oci_connection(conn: oci.Connection):
     except oci.DatabaseError as e:
         logging.error(f"Connection failed: {e}")
     return False
-
 
 def debug_alloydb_connection(conn: psycopg2.extensions.connection):
     try:
