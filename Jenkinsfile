@@ -67,22 +67,24 @@ pipeline {
       }
       steps {
         withCredentials([
-          string(credentialsId: 'BACKEND_ENV_SECRET', variable: 'BACKEND_ENV'),
-          string(credentialsId: 'ARCHIMEDES_ENV_SECRET', variable: 'ARCHIMEDES_ENV'),
+          file(credentialsId: 'BACKEND_ENV_FILE', variable: 'BACKEND_ENV_PATH'),
+          file(credentialsId: 'ARCHIMEDES_ENV_FILE', variable: 'ARCHIMEDES_ENV_PATH'),
           file(credentialsId: 'FIRESTORE_CREDENTIALS_FILE', variable: 'FIRESTORE_CREDENTIALS_PATH')
         ]) {
           sh '''
-            export BACKEND_ENV="${BACKEND_ENV}"
-            export ARCHIMEDES_ENV="${ARCHIMEDES_ENV}"
-            # Crea la cartella per i segreti se non esiste e copia il file dalla variabile
+            # Leggi il contenuto dei file di secret e assegnali a variabili
+            export BACKEND_ENV=$(cat "$BACKEND_ENV_PATH")
+            export ARCHIMEDES_ENV=$(cat "$ARCHIMEDES_ENV_PATH")
+            
+            # Crea la cartella per i segreti se non esiste e copia il file di Firestore
             mkdir -p secrets
             cp "$FIRESTORE_CREDENTIALS_PATH" secrets/credentials.json
             
-            # (Facoltativo) Scrive un file .env temporaneo per passare altre variabili a Docker Compose
+            # Scrive un file env.tmp con il contenuto multilinea correttamente formattato
             cat <<EOF > env.tmp
-BACKEND_ENV=${BACKEND_ENV}
-ARCHIMEDES_ENV=${ARCHIMEDES_ENV}
-EOF
+        BACKEND_ENV=${BACKEND_ENV}
+        ARCHIMEDES_ENV=${ARCHIMEDES_ENV}
+        EOF
 
             # Avvia i container tramite Docker Compose usando il file .env
             sudo docker compose -p avalon -f docker-compose.prod.yaml --env-file env.tmp up -d --force-recreate
