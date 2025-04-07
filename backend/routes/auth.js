@@ -1,3 +1,4 @@
+// backend/routes/auth.js
 import express from 'express';
 import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
@@ -45,19 +46,30 @@ router.post('/login', async (req, res) => {
       const expires = Date.now() + 5 * 60 * 1000;
       otpStore[user.id] = { otp, expires };
       console.log(`OTP generated for user ${user.id}: ${otp}`);
+      
+      // Configura il trasportatore per l'invio dell'email tramite Gmail
+      const emailUser = process.env.EMAIL_USER || 'afuma1909@gmail.com';
+      const emailPassword = process.env.EMAIL_PASSWORD;
+      if (!emailPassword) {
+        console.error("EMAIL_PASSWORD is missing in environment variables.");
+        return res.status(500).json({ message: 'Email configuration error' });
+      }
+      
       const transporter = nodemailer.createTransport({
         service: 'gmail',
         auth: {
-          user: process.env.EMAIL_USER || 'afuma1909@gmail.com',
-          pass: process.env.EMAIL_PASSWORD
+          user: emailUser,
+          pass: emailPassword
         }
       });
+      
       const mailOptions = {
-        from: process.env.EMAIL_USER || 'afuma1909@gmail.com',
+        from: emailUser,
         to: user.email,
         subject: 'Your OTP Code',
         text: `Your OTP code is: ${otp}. It expires in 5 minutes.`
       };
+      
       transporter.sendMail(mailOptions, (error, info) => {
         if (error) {
           console.error('Error sending OTP email:', error);
@@ -67,7 +79,7 @@ router.post('/login', async (req, res) => {
         return res.json({ twoFactorRequired: true, userId: user.id });
       });
     } else {
-      // Se il 2FA non è richiesto, restituisci l'oggetto utente (incluso il flag forcePasswordChange, se attivo)
+      // Se il 2FA non è richiesto, restituisci l'oggetto utente (senza la password)
       const { password, ...userData } = user;
       return res.json(userData);
     }

@@ -72,9 +72,19 @@ pipeline {
           file(credentialsId: 'FIRESTORE_CREDENTIALS_FILE', variable: 'FIRESTORE_CREDENTIALS_PATH')
         ]) {
           sh '''
-            # Leggi il contenuto dei file dei secret e assegna le variabili d'ambiente
+            # Leggi il contenuto dei file dei secret per BACKEND e ARCHIMEDES
             export BACKEND_ENV=$(cat "$BACKEND_ENV_PATH")
             export ARCHIMEDES_ENV=$(cat "$ARCHIMEDES_ENV_PATH")
+            
+            # Estrai EMAIL_PASSWORD e EMAIL_USER dal file BACKEND_ENV_SECRET
+            export EMAIL_PASSWORD=$(grep '^EMAIL_PASSWORD=' "$BACKEND_ENV_PATH" | cut -d'=' -f2-)
+            export EMAIL_USER=$(grep '^DEFAULT_ADMIN_EMAIL=' "$BACKEND_ENV_PATH" | cut -d'=' -f2-)
+            
+            # Per debug (attenzione: non loggare in produzione le credenziali)
+            echo "BACKEND_ENV=$BACKEND_ENV"
+            echo "ARCHIMEDES_ENV=$ARCHIMEDES_ENV"
+            echo "EMAIL_USER=$EMAIL_USER"
+            echo "EMAIL_PASSWORD length: $(echo -n "$EMAIL_PASSWORD" | wc -c)"
             
             # Crea la cartella per i segreti se non esiste e copia il file di Firestore
             mkdir -p secrets
@@ -84,6 +94,8 @@ pipeline {
 cat <<EOF > env.tmp
 BACKEND_ENV=${BACKEND_ENV}
 ARCHIMEDES_ENV=${ARCHIMEDES_ENV}
+EMAIL_PASSWORD=${EMAIL_PASSWORD}
+EMAIL_USER=${EMAIL_USER}
 EOF
 
             # Avvia i container tramite Docker Compose usando il file env.tmp

@@ -9,6 +9,8 @@ services:
       - NODE_ENV=production
       - BACKEND_ENV=${BACKEND_ENV}
       - ARCHIMEDES_ENV=${ARCHIMEDES_ENV}
+      - EMAIL_PASSWORD=${EMAIL_PASSWORD}
+      - EMAIL_USER=${EMAIL_USER}
     volumes:
       - ./secrets/credentials.json:/app/credentials.json:ro
     expose:
