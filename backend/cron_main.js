@@ -18,11 +18,11 @@ const workingDir = path.join(__dirname, '..', 'Archimedes2.0');
 
 // Creazione dinamica del file .env utilizzando il contenuto salvato nel secret (ARCHIMEDES_ENV_SECRET)
 const envFilePath = path.join(workingDir, '.env');
-if (process.env.ARCHIMEDES_ENV_SECRET) {
-  fs.writeFileSync(envFilePath, process.env.ARCHIMEDES_ENV_SECRET);
+if (process.env.ARCHIMEDES_ENV) {
+  fs.writeFileSync(envFilePath, process.env.ARCHIMEDES_ENV);
   console.log(`[CRON_MAIN] .env file created at ${envFilePath}`);
 } else {
-  console.warn('[CRON_MAIN] ARCHIMEDES_ENV_SECRET is not defined!');
+  console.warn('[CRON_MAIN] ARCHIMEDES_ENV is not defined!');
 }
 
 async function updateMUP() {
