@@ -73,8 +73,8 @@ pipeline {
         ]) {
           sh '''
             # Leggi il contenuto dei file dei secret per BACKEND e ARCHIMEDES
-            export BACKEND_ENV="$(cat "$BACKEND_ENV_PATH")"
-            export ARCHIMEDES_ENV="$(cat "$ARCHIMEDES_ENV_PATH")"
+            export BACKEND_ENV="$(awk '{printf "%s\\n", $0}' "$BACKEND_ENV_PATH")"
+            export ARCHIMEDES_ENV="$(awk '{printf "%s\\n", $0}' "$ARCHIMEDES_ENV_PATH")"
             
             # Estrai EMAIL_PASSWORD e EMAIL_USER dal file BACKEND_ENV_SECRET
             export EMAIL_PASSWORD="$(grep '^EMAIL_PASSWORD=' "$BACKEND_ENV_PATH" | cut -d'=' -f2-)"
