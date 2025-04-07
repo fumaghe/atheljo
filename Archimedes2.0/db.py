@@ -12,6 +12,12 @@ import pymysql
 
 import utils
 
+def clean_password(pw: str) -> str:
+    """Rimuove le virgolette iniziali e finali, se presenti."""
+    if pw and pw.startswith('"') and pw.endswith('"'):
+        return pw[1:-1]
+    return pw
+
 class MerlinDB(BaseModel):
     environment: str = Field(..., description="Configuration values from the .env file")
     db_type: str = Field(..., description="Type of database to connect to")
@@ -48,11 +54,13 @@ class MerlinDB(BaseModel):
     def connect_MySQL(self):
         """Connects to MySQL database using PyMySQL."""
         try:
+            # Pulisce la password rimuovendo eventuali virgolette iniziali e finali
+            clean_pw = clean_password(self.db_password)
             db_conn = pymysql.connect(
                 host=self.db_host,
                 port=int(self.db_port),
                 user=self.db_user,
-                password=self.db_password,
+                password=clean_pw,
                 database=self.db_name
             )
             return db_conn
