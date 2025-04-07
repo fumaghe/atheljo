@@ -28,10 +28,11 @@ class Main(BaseModel):
         
         # Gestione in base al tipo di database
         if self.config.get("DATABASE_TYPE") == "MySQL":
-            # Se il DATABASE_TYPE è MySQL, assicuriamoci che MYSQL_DB_NAME sia definito
+            # Se il DATABASE_TYPE è MySQL, controlla se MYSQL_DB_NAME è definito;
+            # se non lo è, imposta un valore di default temporaneo.
             if not self.config.get("MYSQL_DB_NAME"):
-                logging.error("MYSQL_DB_NAME is not defined in the .env file for MySQL connection.")
-                raise Exception("MYSQL_DB_NAME not defined")
+                logging.warning("MYSQL_DB_NAME is not defined in the .env file for MySQL connection. Using default value 'default_mysql_db'.")
+                self.config["MYSQL_DB_NAME"] = "default_mysql_db"
         else:
             # Per Mongo, se MONGO_URI non è definito, impostiamo un dummy value
             if not self.config.get("MONGO_URI"):
