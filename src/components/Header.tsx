@@ -39,7 +39,7 @@ export default function Header() {
     try {
       setIsUpdating(true);
       setUpdateStatus('idle');
-      const apiBase = import.meta.env.VITE_API_BASE || 'http://localhost:5000/api';
+      const apiBase = import.meta.env.VITE_API_BASE || '/api';
       const response = await fetch(`${apiBase}/update_data`, { method: 'POST' });
       if (!response.ok) {
         throw new Error('Update failed');

@@ -26,6 +26,7 @@ interface AuthContextType {
   users: User[];
 }
 
+// Definizione del context
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -36,9 +37,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [error, setError] = useState<string | null>(null);
   const [users, setUsers] = useState<User[]>([]);
 
-  const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:5000/api';
+  // MODIFICA: Usa un percorso relativo in produzione
+  const API_BASE = import.meta.env.VITE_API_BASE || '/api';
 
-  // 1) Carica sessione da localStorage
+  // 1) Carica la sessione da localStorage
   useEffect(() => {
     const storedUser = localStorage.getItem('aiopsUser');
     const storedTimestamp = localStorage.getItem('aiopsUserTimestamp');
@@ -63,7 +65,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setIsInitializingSession(false);
   }, []);
 
-  // 2) Salva sessione in localStorage quando user cambia
+  // 2) Salva la sessione in localStorage quando l'utente cambia
   useEffect(() => {
     if (isInitializingSession) return;
     if (user && isAuthenticated) {
@@ -91,12 +93,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setIsLoading(false);
         return { success: false, message: data.message };
       }
-      // Se OTP è richiesto
+      // Se viene richiesto l'OTP per 2FA
       if (data.twoFactorRequired) {
         setIsLoading(false);
         return { success: false, twoFactorRequired: true, userId: data.userId, message: data.message };
       }
-      // Altrimenti login completo
+      // Login completato
       setUser(data);
       setIsAuthenticated(true);
       setIsLoading(false);
@@ -118,7 +120,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     localStorage.removeItem('aiopsUserTimestamp');
   };
 
-  // 5) getUsers
+  // 5) Funzione per ottenere gli utenti
   const getUsers = async (): Promise<User[]> => {
     try {
       const response = await fetch(`${API_BASE}/users`);
@@ -131,7 +133,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-  // 6) addUser
+  // 6) Aggiungi utente
   const addUser = async (userData: Omit<User, 'id' | 'createdAt' | 'updatedAt'>): Promise<User | null> => {
     try {
       const response = await fetch(`${API_BASE}/auth/register`, {
@@ -154,10 +156,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-  // 7) updateUser
+  // 7) Aggiorna utente
   const updateUser = async (id: string, userData: Partial<User>): Promise<User | null> => {
     try {
-      // Forza la conversione di permissions in array di stringhe
+      // Converte 'permissions' in un array di stringhe
       if (userData.permissions) {
         if (Array.isArray(userData.permissions) && userData.permissions.length > 0) {
           if (typeof userData.permissions[0] === 'object') {
@@ -192,7 +194,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-  // 8) deleteUser
+  // 8) Elimina utente
   const deleteUser = async (id: string): Promise<boolean> => {
     try {
       const response = await fetch(`${API_BASE}/users/${id}`, {
@@ -204,7 +206,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return false;
       }
       setUsers(prev => prev.filter(u => u.id !== id));
-      // Se abbiamo cancellato l'utente che è loggato
+      // Se l'utente eliminato è quello loggato
       if (user && user.id === id) {
         logout();
       }
@@ -216,7 +218,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-  // 9) Carica la lista degli utenti se siamo autenticati
+  // 9) Carica la lista degli utenti se l'utente è autenticato
   useEffect(() => {
     if (isAuthenticated) {
       getUsers().then(fetchedUsers => setUsers(fetchedUsers));

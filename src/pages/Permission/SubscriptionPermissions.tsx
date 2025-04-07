@@ -119,7 +119,7 @@ const SubscriptionPermissions: React.FC = () => {
   // Stato per gestire l'espansione/collasso per ogni gruppo (chiave: subscription_level + '_' + page)
   const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
 
-  const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:5000/api';
+  const API_BASE = import.meta.env.VITE_API_BASE || '/api';
 
   useEffect(() => {
     if (!user || user.role !== 'admin') {

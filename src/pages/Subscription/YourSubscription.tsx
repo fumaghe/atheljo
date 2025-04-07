@@ -226,7 +226,7 @@ export default function YourSubscription() {
     const fetchPermissions = async () => {
       try {
         setLoading(true);
-        const apiBase = import.meta.env.VITE_API_BASE || 'http://localhost:5000/api';
+        const apiBase = import.meta.env.VITE_API_BASE || '/api';
         const res = await fetch(`${apiBase}/subscription-permissions`);
         if (!res.ok) {
           throw new Error('Failed to fetch subscription permissions');

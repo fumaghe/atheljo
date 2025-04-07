@@ -99,7 +99,7 @@ function GenerateReportSection() {
   const [customInterval, setCustomInterval] = useState<number>(0);
 
   // Base URL dell'API backend
-  const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:5000/api';
+  const API_BASE = import.meta.env.VITE_API_BASE || '/api';
 
   // Permessi per generazione report
   const { canAccess: reportCanAccess, shouldBlur: reportShouldBlur } =
@@ -358,7 +358,7 @@ function HistorySection() {
   const [reportSkip, setReportSkip] = useState(0);
   const [reportLimit] = useState(5);
   const [hasMoreReports, setHasMoreReports] = useState(true);
-  const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:5000/api';
+  const API_BASE = import.meta.env.VITE_API_BASE || '/api';
   const { canAccess: historyCanAccess, shouldBlur: historyShouldBlur } =
     useSubscriptionPermissions('Reports', 'History Section');
 

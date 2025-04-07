@@ -40,7 +40,7 @@ export const useSubscriptionPermissions = (
   const [permissionLevel, setPermissionLevel] = useState<'none' | 'blur' | 'full'>('none');
 
   // Recuperiamo la base URL dal .env (vite)
-  const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:5000/api';
+  const API_BASE = import.meta.env.VITE_API_BASE || '/api';
 
   useEffect(() => {
     if (user?.role === 'admin') {

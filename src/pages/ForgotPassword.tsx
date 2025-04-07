@@ -9,7 +9,7 @@ const ForgotPassword: React.FC = () => {
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:5000/api";
+  const API_BASE = import.meta.env.VITE_API_BASE || "/api";
   const navigate = useNavigate();
 
   const handleSubmit = async (e: React.FormEvent) => {

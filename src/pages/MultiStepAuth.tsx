@@ -1,3 +1,4 @@
+// src/pages/MultiStepAuth.tsx
 import React, { useEffect, useState } from 'react';
 import {
   AlertCircle,
@@ -12,7 +13,6 @@ import {
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 
-// Immagini di esempio (sostituisci con le tue)
 import loginPhoto from '../assets/images/login_photo.png';
 import logoWhite from '../assets/images/X_White.png';
 
@@ -235,7 +235,8 @@ const MultiStepAuth: React.FC = () => {
       return;
     }
     try {
-      const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:5000/api';
+      // MODIFICA: Usa percorso relativo per API_BASE
+      const API_BASE = import.meta.env.VITE_API_BASE || '/api';
       const response = await fetch(`${API_BASE}/auth/forgot-password`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -263,7 +264,8 @@ const MultiStepAuth: React.FC = () => {
     }
     setIsLoading(true);
     try {
-      const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:5000/api';
+      // MODIFICA: Usa percorso relativo per API_BASE
+      const API_BASE = import.meta.env.VITE_API_BASE || '/api';
       const response = await fetch(`${API_BASE}/auth/verify-otp`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -291,7 +293,6 @@ const MultiStepAuth: React.FC = () => {
     setIsLoading(false);
   };
 
-  // Funzione aggiornata per cambiare la password
   const handleChangePassword = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg('');
@@ -317,7 +318,6 @@ const MultiStepAuth: React.FC = () => {
       setErrorMsg('Error updating the password.');
       return;
     }
-    // Aggiorna lo stato dell'utente e il localStorage
     const updatedUser = { ...currentUser, forcePasswordChange: false };
     setCurrentUser(updatedUser);
     localStorage.setItem('aiopsUser', JSON.stringify(updatedUser));
@@ -660,7 +660,6 @@ const MultiStepAuth: React.FC = () => {
 
   return (
     <>
-      {/* Stili CSS incorporati per applicare il ridimensionamento in base alla larghezza dello schermo */}
       <style>{`
         .card-wrapper {
           transform-origin: top center;
@@ -687,14 +686,10 @@ const MultiStepAuth: React.FC = () => {
           }
         }
       `}</style>
-      {/* Container esterno: sfondo e centratura */}
       <div className="font-sans bg-[#0a1f20] min-h-screen flex items-start md:items-center justify-center px-4 py-8">
-        {/* Wrapper che scala la card */}
         <div className="card-wrapper">
-          {/* Card con dimensioni fisse */}
           <div className="w-[800px] h-[700px] bg-[#0e2e31] rounded-2xl shadow-lg overflow-hidden">
             <div className="grid grid-cols-1 md:grid-cols-2 h-full">
-              {/* Colonna sinistra: immagine */}
               <div className="relative hidden md:block">
                 <img
                   src={loginPhoto}
@@ -708,7 +703,6 @@ const MultiStepAuth: React.FC = () => {
                   className="absolute top-0 left-0 m-4 w-17 h-12 z-10"
                 />
               </div>
-              {/* Colonna destra: form e indicatori */}
               <div className="p-6 md:p-10 flex flex-col justify-center">
                 <div className="text-center mb-6">
                   {step === 1 && !isForgotPassword && (

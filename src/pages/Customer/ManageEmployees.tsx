@@ -541,7 +541,7 @@ const ManageEmployees: React.FC = () => {
   useEffect(() => {
     const fetchPermissions = async () => {
       try {
-        const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:5000/api';
+        const API_BASE = import.meta.env.VITE_API_BASE || '/api';
         const res = await fetch(`${API_BASE}/subscription-permissions`);
         if (!res.ok) {
           console.error('Error fetching subscription permissions');
@@ -578,7 +578,7 @@ const ManageEmployees: React.FC = () => {
   useEffect(() => {
     const fetchCompanies = async () => {
       try {
-        const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:5000/api';
+        const API_BASE = import.meta.env.VITE_API_BASE || '/api';
         const res = await fetch(`${API_BASE}/companies`);
         if (res.ok) {
           const companies = await res.json();
