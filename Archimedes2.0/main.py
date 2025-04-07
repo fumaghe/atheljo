@@ -25,21 +25,29 @@ class Main(BaseModel):
         """Main function to run the project."""
         logging.info("=== Inizio run() ===")
         
-        # Ricarica il file .env ad ogni iterazione
+        # Ricarica il file .env
         self.config = dotenv_values(self.env_file_path)
-        logging.debug("Configurazione caricata da {}: {}".format(self.env_file_path, self.config))
+        logging.debug("Contenuto letto dal file {}: {}".format(self.env_file_path, self.config))
         
-        # Log del DATABASE_TYPE
+        # Leggi e logga il contenuto grezzo del file .env per verificare che sia corretto
+        try:
+            with open(self.env_file_path, "r") as f:
+                env_file_content = f.read()
+            logging.debug("Contenuto del file .env:\n{}".format(env_file_content))
+        except Exception as e:
+            logging.error("Errore nella lettura del file .env: {}".format(e))
+        
+        # Verifica la presenza di DATABASE_TYPE
         db_type = self.config.get("DATABASE_TYPE")
         logging.info("DATABASE_TYPE letto: {}".format(db_type))
         
-        # Se il DATABASE_TYPE è MySQL, forziamo MYSQL_DB_NAME a essere una stringa (anche se vuota)
+        # Se DATABASE_TYPE è MySQL, forza MYSQL_DB_NAME a essere una stringa (default se mancante)
         if db_type == "MySQL":
             original_db_name = self.config.get("MYSQL_DB_NAME")
             self.config["MYSQL_DB_NAME"] = original_db_name or "default_mysql_db"
             logging.info("MYSQL_DB_NAME: '{}' (originalmente '{}')".format(self.config["MYSQL_DB_NAME"], original_db_name))
         else:
-            # Per Mongo, se MONGO_URI non è definito, impostiamo un dummy value
+            # Per altri tipi (ad esempio Mongo), se MONGO_URI non è definito, imposta un dummy value
             if not self.config.get("MONGO_URI"):
                 self.config["MONGO_URI"] = "mongodb://localhost:27017/dummydb"
                 logging.info("MONGO_URI non definito, impostato dummy value: {}".format(self.config["MONGO_URI"]))
@@ -48,8 +56,8 @@ class Main(BaseModel):
         try:
             raw_data_companies, raw_data_telemetry = connect_merlindb(self.config, self.env_file_path)
             logging.info("Connessione al database riuscita")
-            logging.debug("Dati companies: {} records".format(len(raw_data_companies) if raw_data_companies else 0))
-            logging.debug("Dati telemetry: {} records".format(len(raw_data_telemetry) if raw_data_telemetry else 0))
+            logging.debug("Records companies: {}".format(len(raw_data_companies) if raw_data_companies else 0))
+            logging.debug("Records telemetry: {}".format(len(raw_data_telemetry) if raw_data_telemetry else 0))
         except Exception as e:
             logging.error("Errore durante la connessione al database: {}".format(e))
             raise e
@@ -69,15 +77,15 @@ class Main(BaseModel):
             logging.info("Salvataggio delle tabelle abilitato")
             try:
                 results_folder = self.config.get("RESULTS_FOLDER")
-                dir_path = os.path.join(self.directory, results_folder)
-                utils.create_dir(dir_path)
+                target_dir = os.path.join(self.directory, results_folder)
+                utils.create_dir(target_dir)
                 utils.write_results(df_capacity, os.path.join(results_folder, "capacity_data.csv"))
                 utils.write_results(df_systems, os.path.join(results_folder, "systems_data.csv"))
-                logging.info("Tabelle salvate in {}".format(dir_path))
+                logging.info("Tabelle salvate in: {}".format(target_dir))
             except Exception as e:
                 logging.error("Errore nel salvataggio delle tabelle: {}".format(e))
         
-        logging.info("=== Inizializzazione di Firebase Admin SDK ===")
+        logging.info("=== Inizializzazione Firebase Admin SDK ===")
         try:
             if not firebase_admin._apps:
                 cred_path = os.path.join(self.directory, "credentials.json")
@@ -90,7 +98,7 @@ class Main(BaseModel):
             logging.error("Errore nell'inizializzazione di Firebase Admin SDK: {}".format(e))
             raise e
         
-        logging.info("=== Aggiornamento dati su Firestore ===")
+        logging.info("=== Aggiornamento Firestore ===")
         try:
             for idx, row in df_systems.iterrows():
                 doc_id = f"{row['hostid']}_{row['pool']}"
@@ -103,16 +111,16 @@ class Main(BaseModel):
         
         logging.info("=== Esecuzione fs.run_archimedesDB ===")
         try:
-            environment = self.config.get("ENVIRONMENT")
-            logging.info("ENVIRONMENT: {}".format(environment))
-            match environment:
+            env_value = self.config.get("ENVIRONMENT")
+            logging.info("ENVIRONMENT: {}".format(env_value))
+            match env_value:
                 case "DEV":
                     fs.run_archimedesDB(self.directory, "AVALON.json")
                 case "PROD":
                     fs.run_archimedesDB(self.directory, "AVALON.json")
                 case _:
                     fs.run_archimedesDB(self.directory)
-            logging.info("fs.run_archimedesDB eseguito")
+            logging.info("fs.run_archimedesDB eseguito correttamente")
         except Exception as e:
             logging.error("Errore durante l'esecuzione di fs.run_archimedesDB: {}".format(e))
             raise e
@@ -124,7 +132,6 @@ if __name__ == "__main__":
     parser.add_argument("--cycles", type=int, default=1, help="Numero di cicli da eseguire")
     args = parser.parse_args()
     
-    # Carica il file .env e attiva il logger
     env_path = os.path.join(os.getcwd(), ".env")
     if not load_dotenv(env_path):
         raise Exception("Fatal Error: .env file not found")
