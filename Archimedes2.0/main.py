@@ -16,17 +16,35 @@ import firebase_admin
 
 class Main(BaseModel):
     directory: str = Field(default=os.getcwd(), description="Main directory of the project")
-    env_file_path: str = Field(default_factory=lambda: os.path.join(os.getcwd(), ".env"), description="Path to the .env file")
-    config: dict = Field(default_factory=lambda: dotenv_values(os.path.join(os.getcwd(), ".env")), 
-                        description="Configuration values from the .env file")
+    env_file_path: str = Field(default_factory=lambda: os.path.join(os.getcwd(), ".env"),
+                                 description="Path to the .env file")
+    config: dict = Field(default_factory=lambda: dotenv_values(os.path.join(os.getcwd(), ".env")),
+                          description="Configuration values from the .env file")
     
     def run(self):
         """Main function to run the project."""
-        # Ricarica la .env ad ogni iterazione
+        # Ricarica il file .env ad ogni iterazione
         self.config = dotenv_values(self.env_file_path)
-
+        
+        # Gestione in base al tipo di database
+        if self.config.get("DATABASE_TYPE") == "MySQL":
+            # Se il DATABASE_TYPE è MySQL, assicuriamoci che MYSQL_DB_NAME sia definito
+            if not self.config.get("MYSQL_DB_NAME"):
+                logging.error("MYSQL_DB_NAME is not defined in the .env file for MySQL connection.")
+                raise Exception("MYSQL_DB_NAME not defined")
+        else:
+            # Per Mongo, se MONGO_URI non è definito, impostiamo un dummy value
+            if not self.config.get("MONGO_URI"):
+                logging.warning("MONGO_URI is not defined in the .env file. Using default dummy value for Merlin DB connection.")
+                self.config["MONGO_URI"] = "mongodb://localhost:27017/dummydb"
+        
         logging.info("Connecting to database")
-        raw_data_companies, raw_data_telemetry = connect_merlindb(self.config, self.env_file_path)
+        try:
+            raw_data_companies, raw_data_telemetry = connect_merlindb(self.config, self.env_file_path)
+        except Exception as e:
+            logging.error(f"Error connecting to Merlin database: {e}")
+            raise e
+        
         df_capacity = results.capacity_trends_table(raw_data_telemetry)
         df_systems = results.systems_data_table(raw_data_companies, raw_data_telemetry)
 
@@ -36,7 +54,6 @@ class Main(BaseModel):
             utils.write_results(df_capacity, os.path.join(self.config.get("RESULTS_FOLDER"), "capacity_data.csv"))
             utils.write_results(df_systems, os.path.join(self.config.get("RESULTS_FOLDER"), "systems_data.csv"))
         
-        # Aggiornamento di Firestore per la collection "system_data"
         # Inizializza Firebase Admin SDK se non già avviato
         if not firebase_admin._apps:
             cred_path = os.path.join(self.directory, "credentials.json")
@@ -44,11 +61,9 @@ class Main(BaseModel):
             initialize_app(cred)
         db = firestore.client()
 
-        # Per ogni riga del DataFrame dei sistemi, usa come ID "hostid_pool"
         for idx, row in df_systems.iterrows():
             doc_id = f"{row['hostid']}_{row['pool']}"
             doc_data = row.to_dict()
-            # Aggiorna (o crea) il documento con merge = True
             db.collection("system_data").document(doc_id).set(doc_data, merge=True)
         
         # Uso di match-case per gestire l'ambiente (richiede Python 3.10+)
@@ -76,6 +91,5 @@ if __name__ == "__main__":
             main_instance.run()
         except Exception as e:
             logging.error(f"Error during iteration {i}: {e}")
-            # Se vuoi interrompere al primo errore, puoi usare: break
         if i < args.cycles:
             time.sleep(20)
