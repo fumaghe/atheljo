@@ -92,10 +92,11 @@ app.post('/api/update_data', (req, res) => {
   });
 });
 
-// Importa i cron job (quelli già esistenti e quello per main.py)
+// Importa i cron job
 import './cron.js';
 import './cron_main.js';
 
-app.listen(PORT, () => {
+// MODIFICA: Ascolta su "0.0.0.0" per accettare connessioni da altri container
+app.listen(PORT, '0.0.0.0', () => {
   console.log(`Server running on port ${PORT}`);
 });

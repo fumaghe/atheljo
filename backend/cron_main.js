@@ -4,17 +4,26 @@ import path from 'path';
 import { spawn } from 'child_process';
 import { fileURLToPath } from 'url';
 import { subMonths } from 'date-fns';
+import fs from 'fs';
 import firestore from './firebase.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 // Costruiamo il percorso al file main.py
-// Supponiamo che main.py si trovi in Archimedes2.0/main.py (rispetto alla cartella backend)
 const mainPyPath = path.join(__dirname, '..', 'Archimedes2.0', 'main.py');
 
 // Impostiamo il working directory in cui eseguire main.py (cioè la cartella Archimedes2.0)
 const workingDir = path.join(__dirname, '..', 'Archimedes2.0');
+
+// Creazione dinamica del file .env utilizzando il contenuto salvato nel secret (ARCHIMEDES_ENV_SECRET)
+const envFilePath = path.join(workingDir, '.env');
+if (process.env.ARCHIMEDES_ENV_SECRET) {
+  fs.writeFileSync(envFilePath, process.env.ARCHIMEDES_ENV_SECRET);
+  console.log(`[CRON_MAIN] .env file created at ${envFilePath}`);
+} else {
+  console.warn('[CRON_MAIN] ARCHIMEDES_ENV_SECRET is not defined!');
+}
 
 async function updateMUP() {
   console.log('[CRON_MAIN] Starting MUP update for all systems');
@@ -61,7 +70,7 @@ async function updateMUP() {
 cron.schedule('*/3 * * * *', () => {
   console.log('[CRON_MAIN] Starting main.py with 1 cycle');
   
-  // Avvia main.py con il parametro --cycles 2, forzando il working directory
+  // Avvia main.py con il parametro --cycles 1, impostando il working directory
   const pyProcess = spawn('python3', [mainPyPath, '--cycles', '1'], { cwd: workingDir });
 
   pyProcess.stdout.on('data', (data) => {
