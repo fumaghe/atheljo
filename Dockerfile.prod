@@ -10,7 +10,7 @@
     COPY package*.json ./
     COPY .npmrc ./
     
-    # Install all dependencies
+    # Install all Node.js dependencies
     RUN npm install --force
     
     # Copy the full project into the container
@@ -27,13 +27,19 @@
     # Set working directory
     WORKDIR /app
     
-    # Installa Python3 e crea l'alias python -> python3
+    # Installa Python3, pip e crea l'alias python -> python3
     RUN apt-get update && apt-get install -y python3 python3-pip python-is-python3
     
-    # Copy package files to install only production dependencies
+    # Copia il file requirements.txt dalla cartella Archimedes2.0
+    COPY Archimedes2.0/requirements.txt ./Archimedes2.0/requirements.txt
+    
+    # Installa le dipendenze Python necessarie usando il requirements.txt
+    RUN pip install -r Archimedes2.0/requirements.txt
+    
+    # Copy package files to install only production dependencies for Node.js
     COPY package*.json ./
     
-    # Install production-only dependencies
+    # Installa le dipendenze Node.js per la produzione
     RUN npm install --production --force
     
     # Copia il backend e la cartella Archimedes2.0 (necessaria per eseguire main.py)
@@ -43,6 +49,6 @@
     # Esponi la porta del backend
     EXPOSE 5000
     
-    # Start the backend server
+    # Avvia il server backend
     CMD ["node", "backend/server.js"]
     
