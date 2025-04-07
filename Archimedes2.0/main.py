@@ -18,18 +18,18 @@ class Main(BaseModel):
     directory: str = Field(default=os.getcwd(), description="Main directory of the project")
     env_file_path: str = Field(default_factory=lambda: os.path.join(os.getcwd(), ".env"),
                                  description="Path to the .env file")
-    config: dict = Field(default_factory=lambda: dotenv_values(os.path.join(os.getcwd(), ".env")),
+    config: dict = Field(default_factory=lambda: dotenv_values(os.path.join(os.getcwd(), ".env")), 
                           description="Configuration values from the .env file")
     
     def run(self):
         """Main function to run the project."""
         logging.info("=== Inizio run() ===")
         
-        # Ricarica il file .env
+        # Ricarica il file .env ad ogni iterazione
         self.config = dotenv_values(self.env_file_path)
-        logging.debug("Contenuto letto dal file {}: {}".format(self.env_file_path, self.config))
+        logging.debug("Configurazione letta dal file {}: {}".format(self.env_file_path, self.config))
         
-        # Leggi e logga il contenuto grezzo del file .env per verificare che sia corretto
+        # Per ulteriore controllo, logga il contenuto grezzo del file .env
         try:
             with open(self.env_file_path, "r") as f:
                 env_file_content = f.read()
@@ -37,20 +37,13 @@ class Main(BaseModel):
         except Exception as e:
             logging.error("Errore nella lettura del file .env: {}".format(e))
         
-        # Verifica la presenza di DATABASE_TYPE
+        # Log della variabile DATABASE_TYPE
         db_type = self.config.get("DATABASE_TYPE")
         logging.info("DATABASE_TYPE letto: {}".format(db_type))
         
-        # Se DATABASE_TYPE è MySQL, forza MYSQL_DB_NAME a essere una stringa (default se mancante)
-        if db_type == "MySQL":
-            original_db_name = self.config.get("MYSQL_DB_NAME")
-            self.config["MYSQL_DB_NAME"] = original_db_name or "default_mysql_db"
-            logging.info("MYSQL_DB_NAME: '{}' (originalmente '{}')".format(self.config["MYSQL_DB_NAME"], original_db_name))
-        else:
-            # Per altri tipi (ad esempio Mongo), se MONGO_URI non è definito, imposta un dummy value
-            if not self.config.get("MONGO_URI"):
-                self.config["MONGO_URI"] = "mongodb://localhost:27017/dummydb"
-                logging.info("MONGO_URI non definito, impostato dummy value: {}".format(self.config["MONGO_URI"]))
+        # Se DATABASE_TYPE non è definito, non possiamo procedere correttamente
+        if db_type is None:
+            logging.error("DATABASE_TYPE non è definito nel file .env!")
         
         logging.info("=== Inizio connessione al database ===")
         try:
@@ -120,7 +113,7 @@ class Main(BaseModel):
                     fs.run_archimedesDB(self.directory, "AVALON.json")
                 case _:
                     fs.run_archimedesDB(self.directory)
-            logging.info("fs.run_archimedesDB eseguito correttamente")
+            logging.info("fs.run_archimedesDB eseguito")
         except Exception as e:
             logging.error("Errore durante l'esecuzione di fs.run_archimedesDB: {}".format(e))
             raise e
