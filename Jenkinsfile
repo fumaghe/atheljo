@@ -9,7 +9,7 @@ pipeline {
   agent {
     node {
       label 'dh3'
-      customWorkspace "/opt/jenkins/workspace/${JOB_NAME}/${BUILD_NUMBER}"
+      customWorkspace "/mnt/engnfs/jenkins/workspace/${JOB_NAME}/${BUILD_NUMBER}"
     }
   }
 
