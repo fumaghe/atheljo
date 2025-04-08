@@ -124,9 +124,9 @@ class Main(BaseModel):
             logging.info("ENVIRONMENT: {}".format(env_value))
             match env_value:
                 case "DEV":
-                    fs.run_archimedesDB(self.directory, "AVALON.json")
+                    fs.run_archimedesDB(self.directory, "requirements.json")
                 case "PROD":
-                    fs.run_archimedesDB(self.directory, "AVALON.json")
+                    fs.run_archimedesDB(self.directory, "requirements.json")
                 case _:
                     fs.run_archimedesDB(self.directory)
             logging.info("fs.run_archimedesDB eseguito")

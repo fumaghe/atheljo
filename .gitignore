@@ -38,6 +38,6 @@ graphs/
 
 # 📄 Altri file
 credentials.json
-AVALON.json
+requirements.json
 _data_upload.py
 _upload_data.py
