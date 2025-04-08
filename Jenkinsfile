@@ -4,6 +4,8 @@ if ( devopsLibrary.rescheduleWhenBranchIndexing() ) {
 
 def scmInfo = []
 def branchName = ''
+// Variabile globale per decidere se procedere o meno con la build
+def shouldBuild = true
 
 pipeline {
   agent {
@@ -23,12 +25,13 @@ pipeline {
   }
 
   stages {
+
     stage('Source checkout') {
       steps {
         script {
           scmInfo = checkout scm
           echo "scm: ${scmInfo}"
-          echo "${scmInfo.GIT_COMMIT}"
+          echo "Commit: ${scmInfo.GIT_COMMIT}"
           if ( scmInfo?.GIT_LOCAL_BRANCH ) {
             branchName = scmInfo.GIT_LOCAL_BRANCH
           } else if ( scmInfo?.GIT_BRANCH ) {
@@ -37,10 +40,35 @@ pipeline {
         }
       }
     }
-    
+
+    // Nuova fase per controllare se il commit corrente è diverso da quello precedente
+    stage('Check for Changes') {
+      steps {
+        script {
+          def commitFile = "${env.WORKSPACE}/previousCommit.txt"
+          def previousCommit = ''
+          if (fileExists(commitFile)) {
+            previousCommit = readFile(commitFile).trim()
+          }
+          if (previousCommit == scmInfo.GIT_COMMIT) {
+            echo "Nessuna modifica rilevata. Commit corrente ${scmInfo.GIT_COMMIT} è uguale al precedente."
+            shouldBuild = false
+          } else {
+            echo "Nuovo commit rilevato: ${scmInfo.GIT_COMMIT} (precedente: ${previousCommit}). Procedo con la build."
+            // Salva il nuovo commit per confronti futuri
+            writeFile(file: commitFile, text: scmInfo.GIT_COMMIT)
+            shouldBuild = true
+          }
+        }
+      }
+    }
+
     stage('Clean environment before run') {
       when {
-        branch pattern: '^((main|master|qa|release)$|(qa|release)(/|-).+)', comparator: "REGEXP"
+        allOf {
+          branch pattern: '^((main|master|qa|release)$|(qa|release)(/|-).+)', comparator: "REGEXP"
+          expression { shouldBuild }
+        }
       }
       steps {
         script {
@@ -49,10 +77,13 @@ pipeline {
         }
       }
     }
-    
+
     stage('Run static code tests in staging') {
       when {
-        branch pattern: '^((main|master|qa)$|qa(/|-).+)', comparator: "REGEXP"
+        allOf {
+          branch pattern: '^((main|master|qa)$|qa(/|-).+)', comparator: "REGEXP"
+          expression { shouldBuild }
+        }
       }
       steps {
         sh '''
@@ -60,10 +91,13 @@ pipeline {
         '''
       }
     }
-    
+
     stage('Run containers for development') {
       when {
-        branch pattern: '^((main|master|qa)$|qa(/|-).+)', comparator: "REGEXP"
+        allOf {
+          branch pattern: '^((main|master|qa)$|qa(/|-).+)', comparator: "REGEXP"
+          expression { shouldBuild }
+        }
       }
       steps {
         withCredentials([
@@ -91,16 +125,22 @@ pipeline {
             # Scrive un file env.tmp per Docker Compose con le variabili
             printf "BACKEND_ENV=%s\nARCHIMEDES_ENV_B64=%s\nEMAIL_PASSWORD=%s\nEMAIL_USER=%s\n" "$BACKEND_ENV" "$ARCHIMEDES_ENV_B64" "$EMAIL_PASSWORD" "$EMAIL_USER" > env.tmp
             
-            # Avvia i container tramite Docker Compose usando il file env.tmp
-            sudo docker compose -p avalon -f docker-compose.prod.yaml --env-file env.tmp up -d --force-recreate
+            # Esegue il build per aggiornare solo i servizi modificati
+            sudo docker compose -p avalon -f docker-compose.prod.yaml --env-file env.tmp build
+            
+            # Avvia i container senza forzare la ricreazione, così aggiornando solo quanto nuovo
+            sudo docker compose -p avalon -f docker-compose.prod.yaml --env-file env.tmp up -d
           '''
         }
       }
     }
-    
+
     stage('Run tests on running code in staging') {
       when {
-        branch pattern: '^((main|master|qa)$|qa(/|-).+)', comparator: "REGEXP"
+        allOf {
+          branch pattern: '^((main|master|qa)$|qa(/|-).+)', comparator: "REGEXP"
+          expression { shouldBuild }
+        }
       }
       steps {
         sh '''
@@ -109,7 +149,7 @@ pipeline {
       }
     }
   }
-  
+
   post {
     always {
       script {
