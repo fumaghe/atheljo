@@ -12,12 +12,6 @@ import pymysql
 
 import utils
 
-def clean_password(pw: str) -> str:
-    """Rimuove le virgolette iniziali e finali, se presenti."""
-    if pw and pw.startswith('"') and pw.endswith('"'):
-        return pw[1:-1]
-    return pw
-
 class MerlinDB(BaseModel):
     environment: str = Field(..., description="Configuration values from the .env file")
     db_type: str = Field(..., description="Type of database to connect to")
@@ -54,13 +48,11 @@ class MerlinDB(BaseModel):
     def connect_MySQL(self):
         """Connects to MySQL database using PyMySQL."""
         try:
-            # Pulisce la password rimuovendo eventuali virgolette iniziali e finali
-            clean_pw = clean_password(self.db_password)
             db_conn = pymysql.connect(
                 host=self.db_host,
                 port=int(self.db_port),
                 user=self.db_user,
-                password=clean_pw,
+                password=self.db_password,
                 database=self.db_name
             )
             return db_conn
@@ -96,13 +88,15 @@ class MerlinDB(BaseModel):
         """ Retrieves all necessary data joining client id from Merlin database."""
         cursor = db_conn.cursor()
         try:
-            cursor.execute("SELECT u.name AS company, s.hostid, s.hostname, s.version, "
-                           "s.insertdate AS first_date, s.last_stats_date AS last_date "
-                           "FROM merlin.users AS u "
-                           "JOIN merlin.storageapp AS s "
-                           "ON u.registration_number COLLATE utf8mb4_0900_ai_ci = s.client_ide COLLATE utf8mb4_0900_ai_ci "
-                           "ORDER BY u.name "
-                           "LIMIT 1000;")
+            cursor.execute(
+                "SELECT u.name AS company, s.hostid, s.hostname, s.version, "
+                "s.insertdate AS first_date, s.last_stats_date AS last_date "
+                "FROM merlin.users AS u "
+                "JOIN merlin.storageapp AS s "
+                "ON u.registration_number COLLATE utf8mb4_0900_ai_ci = s.client_ide COLLATE utf8mb4_0900_ai_ci "
+                "ORDER BY u.name "
+                "LIMIT 1000;"
+            )
             rows = cursor.fetchall()
             columns = [desc[0] for desc in cursor.description]
             df_companies_data = pd.DataFrame(rows, columns=columns)
