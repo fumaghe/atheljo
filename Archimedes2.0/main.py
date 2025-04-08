@@ -29,13 +29,11 @@ class Main(BaseModel):
         
         # Ricarica il file .env ad ogni iterazione
         self.config = dotenv_values(self.env_file_path)
-        logging.debug("Configurazione letta dal file {}: {}".format(self.env_file_path, self.config))
         
         # Log del contenuto grezzo del file .env per verificare la formattazione
         try:
             with open(self.env_file_path, "r") as f:
                 env_file_content = f.read()
-            logging.debug("Contenuto del file .env:\n{}".format(env_file_content))
         except Exception as e:
             logging.error("Errore nella lettura del file .env: {}".format(e))
         
