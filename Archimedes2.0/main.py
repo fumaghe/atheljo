@@ -82,10 +82,24 @@ class Main(BaseModel):
         
         logging.info("=== Inizializzazione Firebase Admin SDK ===")
         try:
-            if not firebase_admin._apps:
+            # Verifica se è stata specificata una variabile d'ambiente per il percorso delle credenziali
+            cred_path = os.environ.get("FIRESTORE_CREDENTIALS_PATH")
+            if cred_path and os.path.exists(cred_path):
+                logging.info("Utilizzo di FIRESTORE_CREDENTIALS_PATH da ambiente: {}".format(cred_path))
+            else:
+                # Se non esiste, utilizza il file "credentials.json" nella directory principale
                 cred_path = os.path.join(self.directory, "credentials.json")
-                logging.info("Caricamento credenziali da: {}".format(cred_path))
-                cred = credentials.Certificate(cred_path)
+                # Se non esiste neanche lì, prova a cercarlo nella cartella "secrets"
+                if not os.path.exists(cred_path):
+                    cred_path = os.path.join(self.directory, "secrets", "credentials.json")
+            # Se il file non è stato trovato, solleva un errore esplicito
+            if not os.path.exists(cred_path):
+                raise FileNotFoundError(f"File credentials.json non trovato. "
+                                        f"Verifica se FIRESTORE_CREDENTIALS_PATH è impostato o se il file è presente in {os.path.join(self.directory, 'secrets')}")
+            logging.info("Caricamento credenziali da: {}".format(cred_path))
+            cred = credentials.Certificate(cred_path)
+            # Inizializza Firebase solo se non è già inizializzato
+            if not firebase_admin._apps:
                 initialize_app(cred)
                 logging.info("Firebase Admin SDK inizializzato")
             db = firestore.client()
