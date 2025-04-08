@@ -76,6 +76,7 @@ def run_archimedesDB(main_dir: str, credential_path: str = None):
         results_dir = os.path.join(main_dir, "results")
         capacity_docs = pd.read_csv(os.path.join(results_dir, "capacity_data.csv"))
         print(f"Loaded {len(capacity_docs)} documents from capacity_data.csv")
+        uploaded_count = 0
         for i in range(len(capacity_docs)):
             doc = convert_to_document(capacity_docs, i)
             hostid = doc.get("hostid")
@@ -84,6 +85,10 @@ def run_archimedesDB(main_dir: str, credential_path: str = None):
             if hostid and pool and date:
                 docid = f"{hostid}_{pool}_{date}"
                 archimedes_db.upload_to_firestore("capacity_trends", docid, doc)
+                uploaded_count += 1
+            else:
+                logging.error(f"Error uploading data: missing fields (hostid: {hostid}, pool: {pool})")
+        print(f"Uploaded {uploaded_count} documents to Firestore")
     except Exception as e:
         logging.error(f"Error uploading data to Firestore: {e}")
         raise Exception("Fatal Error: Error uploading data to Firestore.")

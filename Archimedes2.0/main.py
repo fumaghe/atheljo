@@ -68,11 +68,13 @@ class Main(BaseModel):
             raise e
         
         try:
+            uploaded_count = 0
             for idx, row in df_systems.iterrows():
                 doc_id = f"{row['hostid']}_{row['pool']}"
                 doc_data = row.to_dict()
                 db.collection("system_data").document(doc_id).set(doc_data, merge=True)
-            print("Firestore update completed")
+                uploaded_count += 1
+            print(f"Firestore update completed; updated {uploaded_count} documents")
         except Exception as e:
             logging.error(f"Error updating Firestore: {e}")
             raise e
