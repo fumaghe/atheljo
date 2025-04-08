@@ -1,4 +1,4 @@
-# /avalon/docker-compose.prod.yaml
+version: "3.8"
 services:
   backend:
     build:
@@ -11,6 +11,7 @@ services:
       - ARCHIMEDES_ENV_B64=${ARCHIMEDES_ENV_B64}
       - EMAIL_PASSWORD=${EMAIL_PASSWORD}
       - EMAIL_USER=${EMAIL_USER}
+      - FIRESTORE_CREDENTIALS_PATH=/app/credentials.json
     volumes:
       - ./secrets/credentials.json:/app/credentials.json:ro
     expose:
