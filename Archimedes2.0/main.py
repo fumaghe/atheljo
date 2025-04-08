@@ -1,7 +1,6 @@
 import argparse
 import time
 import logging
-from pydantic import BaseModel, Field
 import os
 from dotenv import load_dotenv, dotenv_values
 
@@ -13,16 +12,19 @@ import fs
 # Importa Firebase Admin SDK per Firestore
 from firebase_admin import credentials, firestore, initialize_app
 import firebase_admin
+from pydantic import BaseModel, Field
 
 class Main(BaseModel):
     directory: str = Field(default=os.getcwd(), description="Main directory of the project")
     env_file_path: str = Field(default_factory=lambda: os.path.join(os.getcwd(), ".env"),
                                  description="Path to the .env file")
+    # Specifica il percorso corretto del file last_id.txt
+    last_id_path: str = Field(default_factory=lambda: os.path.join(os.getcwd(), "last_id.txt"),
+                              description="Path to the last_id.txt file")
     config: dict = Field(default_factory=lambda: dotenv_values(os.path.join(os.getcwd(), ".env")),
                           description="Configuration values from the .env file")
     
     def run(self):
-        """Main function to run the project."""
         logging.info("=== Inizio run() ===")
         
         # Ricarica il file .env ad ogni iterazione
@@ -46,10 +48,11 @@ class Main(BaseModel):
         
         logging.info("=== Inizio connessione al database ===")
         try:
-            raw_data_companies, raw_data_telemetry = connect_merlindb(self.config, self.env_file_path)
+            # Qui viene passato il percorso corretto del file last_id.txt
+            raw_data_companies, raw_data_telemetry = connect_merlindb(self.config, self.last_id_path)
             logging.info("Connessione al database riuscita")
-            logging.debug("Records companies: {}".format(len(raw_data_companies) if raw_data_companies else 0))
-            logging.debug("Records telemetry: {}".format(len(raw_data_telemetry) if raw_data_telemetry else 0))
+            logging.debug("Records companies: {}".format(len(raw_data_companies) if raw_data_companies is not None else 0))
+            logging.debug("Records telemetry: {}".format(len(raw_data_telemetry) if raw_data_telemetry is not None else 0))
         except Exception as e:
             logging.error("Errore durante la connessione al database: {}".format(e))
             raise e

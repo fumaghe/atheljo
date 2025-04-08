@@ -19,7 +19,7 @@ TIMEFRAME_HOURS = 4
 
 #### General use decorators and functions
 def format_decimal_places(precision: int = DECIMAL_PRECISION):
-    """ Decorator to set the number of decimal places for int or float """
+    """Decorator to set the number of decimal places for int or float."""
     def deco(func):
         def wrapper(*args, **kwargs):
             result = func(*args, **kwargs)
@@ -30,7 +30,7 @@ def format_decimal_places(precision: int = DECIMAL_PRECISION):
     return deco
 
 def convert_to_percentage(func: Callable) -> Callable:
-    """ Decorator to convert a number to a percentage """
+    """Decorator to convert a number to a percentage."""
     def wrapper(*args, **kwargs):
         result = func(*args, **kwargs)
         if isinstance(result, (int, float)):  # Check that the value is actually a number
@@ -78,7 +78,7 @@ def numpy_to_python(record):
             record[key] = pd.to_datetime(value).strftime("%Y-%m-%d %H:%M:%S")
     return record
 
-def datetime_to_string(datetime_obj: datetime, allow_colon: bool = True) ->  str:
+def datetime_to_string(datetime_obj: datetime, allow_colon: bool = True) -> str:
     if not allow_colon:
         return datetime_obj.strftime("%Y-%m-%d_%H-%M-%S")
     return datetime_obj.strftime("%Y-%m-%d_%H:%M:%S")
