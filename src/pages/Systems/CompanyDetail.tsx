@@ -459,6 +459,11 @@ export default function CompanyDetail() {
                   </div>
                 </div>
 
+                {/* Visualizzazione della Last Date */}
+                <div className="text-right text-xs text-[#eeeeee]/60 mt-2">
+                  Last update: {system.last_date}
+                </div>
+
                 <button
                   onClick={() => navigate(`/systems/${system.hostid}`)}
                   className="w-full py-2 mt-4 bg-[#22c1d4] text-[#06272b] rounded-lg font-semibold hover:bg-[#22c1d4]/90 transition-colors"

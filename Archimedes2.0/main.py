@@ -117,6 +117,19 @@ class Main(BaseModel):
             raise e
         
         try:
+            # Delete documents from "system_data" collection that do not have '_' in their document ID
+            docs = db.collection("system_data").stream()
+            for doc in docs:
+                # If the document id does not contain an underscore, delete the document
+                if "_" not in doc.id:
+                    doc.reference.delete()
+                    logging.info(f"Deleted document {doc.id} because it does not contain '_'")
+            logging.info("Deletion of old system_data documents completed")
+        except Exception as e:
+            logging.error("Error during deletion in system_data: {}".format(e))
+            raise e
+        
+        try:
             # Execute additional Firestore operations using ArchimedesDB
             env_value = self.config.get("ENVIRONMENT")
             match env_value:
