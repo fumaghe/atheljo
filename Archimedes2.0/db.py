@@ -20,7 +20,9 @@ class MerlinDB(BaseModel):
     debug_active: bool = Field(False, description="Debug mode active")
 
     def setup_connection(self, config: dict):
-        # Sceglie la connessione in base al database type
+        """
+        Chooses the connection method based on the database type.
+        """
         match self.db_type:
             case "oci":
                 self.db_host = config.get("OCI_HOST")
@@ -43,7 +45,7 @@ class MerlinDB(BaseModel):
                 raise ValueError("Fatal error: Database connection not defined")
     
     def connect_MySQL(self):
-        """Connessione al database MySQL utilizzando PyMySQL."""
+        """Connect to MySQL database using PyMySQL."""
         try:
             db_conn = pymysql.connect(
                 host=self.db_host,
@@ -58,7 +60,7 @@ class MerlinDB(BaseModel):
             return None
 
     def connect_to_OCI(self):
-        """Connessione al database Oracle utilizzando oracledb."""
+        """Connect to Oracle database using oracledb."""
         try:
             dsn = oci.makedsn(
                 host=self.db_host,
@@ -76,12 +78,12 @@ class MerlinDB(BaseModel):
             return None
 
     def connect_to_AlloyDB(self):
-        """Placeholder per la connessione ad AlloyDB."""
-        # Implementare la connessione se necessario
+        """Placeholder for connecting to AlloyDB."""
+        # Implement the connection if needed
         pass
 
     def get_companies_data(self, db_conn):
-        """Recupera i dati delle aziende dal database Merlin."""
+        """Retrieve companies data from the Merlin database."""
         cursor = db_conn.cursor()
         try:
             cursor.execute(
@@ -110,9 +112,9 @@ class MerlinDB(BaseModel):
         
     def update_telemetry(self, db_conn, last_id: str):
         """
-        Recupera i dati di telemetry utilizzando un LIMIT dinamico, calcolato sulla
-        differenza tra l'ultimo id presente nella tabella e il last_id passato.
-        Restituisce una tupla: (DataFrame, new_last_id)
+        Retrieve telemetry data using a dynamic LIMIT calculated based on the difference
+        between the maximum id in the table and the provided last_id.
+        Returns a tuple: (DataFrame, new_last_id)
         """
         cursor = db_conn.cursor()
         
@@ -134,7 +136,6 @@ class MerlinDB(BaseModel):
             rows = cursor.fetchall()
             columns = [desc[0] for desc in cursor.description]
             df_telemetry_data = pd.DataFrame(rows, columns=columns)
-            # Salva i dati in csv se necessario
             utils.create_dir("data")
             df_telemetry_data.to_csv(os.path.join("data", "telemetry_data.csv"), index=False)
             logging.info(f"Data retrieved successfully: {len(df_telemetry_data)} records in total")
@@ -145,7 +146,7 @@ class MerlinDB(BaseModel):
             return None, new_last_id
         
     def _set_environment_options(self):
-        """Imposta le opzioni dell’ambiente (debug attivo/inattivo)."""
+        """Set the environment options (debug mode active/inactive)."""
         match self.environment:
             case "dev":
                 self.debug_active = True
@@ -158,10 +159,12 @@ class MerlinDB(BaseModel):
 
 
 def create_connection(config: dict, last_id_path: str):
-    """Definisce la connessione al database Merlin leggendo LAST_ID dal file specificato."""
+    """
+    Define the connection to the Merlin database by reading LAST_ID from the specified file.
+    """
     db_type = config.get("DATABASE_TYPE").lower()
     environment = config.get("ENVIRONMENT").lower()
-    # Legge il valore di LAST_ID dal file last_id.txt
+    # Read the LAST_ID value from the file
     last_id = utils.read_last_id(last_id_path)
     match db_type:
         case "oci" | "alloydb" | "mysql":

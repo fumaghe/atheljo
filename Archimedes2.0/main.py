@@ -9,117 +9,116 @@ from db import connect_merlindb
 import results
 import fs
 
-# Importa Firebase Admin SDK per Firestore
 from firebase_admin import credentials, firestore, initialize_app
 import firebase_admin
 from pydantic import BaseModel, Field
+import pandas as pd
 
 class Main(BaseModel):
     directory: str = Field(default=os.getcwd(), description="Main directory of the project")
     env_file_path: str = Field(default_factory=lambda: os.path.join(os.getcwd(), ".env"),
                                  description="Path to the .env file")
-    # Specifica il percorso corretto del file last_id.txt
     last_id_path: str = Field(default_factory=lambda: os.path.join(os.getcwd(), "last_id.txt"),
                               description="Path to the last_id.txt file")
     config: dict = Field(default_factory=lambda: dotenv_values(os.path.join(os.getcwd(), ".env")),
                           description="Configuration values from the .env file")
     
     def run(self):
-        logging.info("=== Inizio run() ===")
-        
-        # Ricarica il file .env ad ogni iterazione
+        # Load configuration from the .env file
         self.config = dotenv_values(self.env_file_path)
         
-        # Log del contenuto grezzo del file .env per verificare la formattazione
         try:
             with open(self.env_file_path, "r") as f:
                 env_file_content = f.read()
         except Exception as e:
-            logging.error("Errore nella lettura del file .env: {}".format(e))
+            logging.error("Error reading .env file: {}".format(e))
         
-        # Log della variabile DATABASE_TYPE
         db_type = self.config.get("DATABASE_TYPE")
-        logging.info("DATABASE_TYPE letto: {}".format(db_type))
+        logging.info("Read DATABASE_TYPE: {}".format(db_type))
         
         if db_type is None:
-            logging.error("DATABASE_TYPE non è definito nel file .env!")
+            logging.error("DATABASE_TYPE is not defined in the .env file!")
         
-        logging.info("=== Inizio connessione al database ===")
         try:
-            # Qui viene passato il percorso corretto del file last_id.txt
+            # Connect to the Merlin database and retrieve the raw data
             raw_data_companies, raw_data_telemetry = connect_merlindb(self.config, self.last_id_path)
-            logging.info("Connessione al database riuscita")
-            logging.debug("Records companies: {}".format(len(raw_data_companies) if raw_data_companies is not None else 0))
-            logging.debug("Records telemetry: {}".format(len(raw_data_telemetry) if raw_data_telemetry is not None else 0))
+            logging.info("Database connection succeeded")
         except Exception as e:
-            logging.error("Errore durante la connessione al database: {}".format(e))
+            logging.error("Error during database connection: {}".format(e))
             raise e
         
-        logging.info("=== Inizio elaborazione tabelle ===")
         try:
+            # Process data to generate capacity trends and systems data tables
             df_capacity = results.capacity_trends_table(raw_data_telemetry)
             df_systems = results.systems_data_table(raw_data_companies, raw_data_telemetry)
-            logging.info("Tabelle elaborate correttamente")
-            logging.debug("Dimensione df_capacity: {}".format(df_capacity.shape))
-            logging.debug("Dimensione df_systems: {}".format(df_systems.shape))
+            logging.info("Tables processed successfully")
         except Exception as e:
-            logging.error("Errore durante l'elaborazione delle tabelle: {}".format(e))
+            logging.error("Error during tables processing: {}".format(e))
             raise e
         
         if self.config.get("SAVE_TABLES") == 'True':
-            logging.info("Salvataggio delle tabelle abilitato")
             try:
                 results_folder = self.config.get("RESULTS_FOLDER")
                 target_dir = os.path.join(self.directory, results_folder)
                 utils.create_dir(target_dir)
                 utils.write_results(df_capacity, os.path.join(results_folder, "capacity_data.csv"))
                 utils.write_results(df_systems, os.path.join(results_folder, "systems_data.csv"))
-                logging.info("Tabelle salvate in: {}".format(target_dir))
+                logging.info("Tables saved in: {}".format(target_dir))
             except Exception as e:
-                logging.error("Errore nel salvataggio delle tabelle: {}".format(e))
+                logging.error("Error saving tables: {}".format(e))
         
-        logging.info("=== Inizializzazione Firebase Admin SDK ===")
         try:
-            # Verifica se è stata specificata una variabile d'ambiente per il percorso delle credenziali
+            # Determine the credentials file path for Firestore
             cred_path = os.environ.get("FIRESTORE_CREDENTIALS_PATH")
             if cred_path and os.path.exists(cred_path):
-                logging.info("Utilizzo di FIRESTORE_CREDENTIALS_PATH da ambiente: {}".format(cred_path))
+                logging.info("Using FIRESTORE_CREDENTIALS_PATH from environment: {}".format(cred_path))
             else:
-                # Se non esiste, utilizza il file "credentials.json" nella directory principale
                 cred_path = os.path.join(self.directory, "credentials.json")
-                # Se non esiste neanche lì, prova a cercarlo nella cartella "secrets"
                 if not os.path.exists(cred_path):
                     cred_path = os.path.join(self.directory, "secrets", "credentials.json")
-            # Se il file non è stato trovato, solleva un errore esplicito
             if not os.path.exists(cred_path):
-                raise FileNotFoundError(f"File credentials.json non trovato. "
-                                        f"Verifica se FIRESTORE_CREDENTIALS_PATH è impostato o se il file è presente in {os.path.join(self.directory, 'secrets')}")
-            logging.info("Caricamento credenziali da: {}".format(cred_path))
+                raise FileNotFoundError(f"File credentials.json not found. "
+                                        f"Check if FIRESTORE_CREDENTIALS_PATH is set or if the file is present in {os.path.join(self.directory, 'secrets')}")
             cred = credentials.Certificate(cred_path)
-            # Inizializza Firebase solo se non è già inizializzato
             if not firebase_admin._apps:
                 initialize_app(cred)
-                logging.info("Firebase Admin SDK inizializzato")
             db = firestore.client()
         except Exception as e:
-            logging.error("Errore nell'inizializzazione di Firebase Admin SDK: {}".format(e))
+            logging.error("Error in Firebase Admin SDK: {}".format(e))
             raise e
         
-        logging.info("=== Aggiornamento Firestore ===")
         try:
+            # Update Firestore documents for system data
             for idx, row in df_systems.iterrows():
-                doc_id = f"{row['hostid']}_{row['pool']}"
-                doc_data = row.to_dict()
-                db.collection("system_data").document(doc_id).set(doc_data, merge=True)
-            logging.info("Aggiornamento di Firestore completato")
+                # Build the document ID based on hostid and pool.
+                # If "pool" is missing (NaN), use only hostid.
+                if pd.isna(row['pool']):
+                    doc_id = f"{row['hostid']}"
+                else:
+                    doc_id = f"{row['hostid']}_{row['pool']}"
+                
+                # Prepare the complete document data from the DataFrame row
+                full_doc_data = row.to_dict()
+                
+                # Get a reference to the Firestore document
+                doc_ref = db.collection("system_data").document(doc_id)
+                current_doc = doc_ref.get()
+                
+                if current_doc.exists:
+                    # If the document already exists, update only the "sending_telemetry" field
+                    update_data = {"sending_telemetry": full_doc_data.get("sending_telemetry")}
+                    doc_ref.set(update_data, merge=True)
+                else:
+                    # If the document does not exist, create it with the full data
+                    doc_ref.set(full_doc_data)
+            logging.info("Firestore update completed")
         except Exception as e:
-            logging.error("Errore durante l'aggiornamento di Firestore: {}".format(e))
+            logging.error("Error updating Firestore: {}".format(e))
             raise e
         
-        logging.info("=== Esecuzione fs.run_archimedesDB ===")
         try:
+            # Execute additional Firestore operations using ArchimedesDB
             env_value = self.config.get("ENVIRONMENT")
-            logging.info("ENVIRONMENT: {}".format(env_value))
             match env_value:
                 case "DEV":
                     fs.run_archimedesDB(self.directory, "requirements.json")
@@ -127,16 +126,13 @@ class Main(BaseModel):
                     fs.run_archimedesDB(self.directory, "requirements.json")
                 case _:
                     fs.run_archimedesDB(self.directory)
-            logging.info("fs.run_archimedesDB eseguito")
         except Exception as e:
-            logging.error("Errore durante l'esecuzione di fs.run_archimedesDB: {}".format(e))
+            logging.error("Error in fs.run_archimedesDB: {}".format(e))
             raise e
-        
-        logging.info("=== Fine run() ===")
         
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run main cycles")
-    parser.add_argument("--cycles", type=int, default=1, help="Numero di cicli da eseguire")
+    parser.add_argument("--cycles", type=int, default=1, help="Number of cycles to execute")
     args = parser.parse_args()
     
     env_path = os.path.join(os.getcwd(), ".env")
@@ -145,15 +141,13 @@ if __name__ == "__main__":
     config = dotenv_values(env_path)
     utils.activate_logger(config, os.getcwd())
     
-    logging.info("=== Avvio del programma main.py ===")
+    logging.info("=== Start of main.py ===")
     main_instance = Main()
     for i in range(1, args.cycles + 1):
-        logging.info("=== Inizio ciclo {} ===".format(i))
         try:
             main_instance.run()
         except Exception as e:
             logging.error("Error during iteration {}: {}".format(i, e))
         if i < args.cycles:
-            logging.info("Attesa di 20 secondi prima del prossimo ciclo")
             time.sleep(20)
-    logging.info("=== Fine del programma main.py ===")
+    logging.info("=== End of program main.py ===")
