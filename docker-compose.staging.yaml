@@ -3,6 +3,9 @@ version: "3.8"
 
 networks:
 
+  avalon_backend:
+    name: avalon_backend
+
   traefik_avalon:
     external: true
 
@@ -16,6 +19,8 @@ services:
     hostname: avalon-backend
     security_opt:
       - no-new-privileges:true
+    networks:
+      - avalon_backend
     environment:
       - NODE_ENV=production
       - BACKEND_ENV=${BACKEND_ENV}
@@ -35,7 +40,9 @@ services:
     security_opt:
       - no-new-privileges:true
     restart: unless-stopped
+    dns: 127.0.0.11
     networks:
+      - avalon_backend
       - traefik_avalon
     ports:
       - "3080:80"
