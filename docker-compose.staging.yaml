@@ -13,6 +13,9 @@ services:
       context: .
       dockerfile: Dockerfile.prod
     container_name: avalon-backend
+    hostname: avalon-backend
+    security_opt:
+      - no-new-privileges:true
     environment:
       - NODE_ENV=production
       - BACKEND_ENV=${BACKEND_ENV}
@@ -28,6 +31,7 @@ services:
       context: .
       dockerfile: Dockerfile.nginx
     container_name: avalon-nginx
+    hostname: avalon-nginx
     security_opt:
       - no-new-privileges:true
     restart: unless-stopped
