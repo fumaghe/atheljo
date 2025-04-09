@@ -1,4 +1,3 @@
-// src/pages/Systems/SystemDetail.tsx
 import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Line } from 'react-chartjs-2';
@@ -102,7 +101,8 @@ function SystemDetail() {
   const navigate = useNavigate();
   const { user } = useAuth();
 
-  // Permessi di accesso per vari componenti
+  // Permessi di accesso per vari componenti (i valori di "canAccess" e "shouldBlur" sono ottenuti
+  // in base al tipo di abbonamento dell'utente, senza forzare alcun blur in base al ruolo)
   const { canAccess: capCan, shouldBlur: capBlur } = useSubscriptionPermissions('SystemDetail', 'Health - Capacity');
   const { canAccess: perfCan, shouldBlur: perfBlur } = useSubscriptionPermissions('SystemDetail', 'Health - Performance');
   const { canAccess: telemCan, shouldBlur: telemBlur } = useSubscriptionPermissions('SystemDetail', 'Health - Telemetry');
@@ -396,7 +396,7 @@ function SystemDetail() {
         name: 'Max Usage',
         value: Number(mupScore.toFixed(1)),
         rawValue: MUP,
-        unit: '',
+        unit: ' TB',
         status: mupScore < 50 ? 'critical' : mupScore < 60 ? 'warning' : 'good',
         message: 'Resource efficiency based on usage patterns',
         icon: BarChart,
@@ -605,23 +605,15 @@ function SystemDetail() {
             <ArrowLeft className="w-6 h-6 text-[#22c1d4]" />
           </button>
           <div>
-            <div className="flex flex-col">
-              <div className="flex items-center gap-2">
-                <h1 className="text-2xl font-bold">{systemData.name}</h1>
-                <span className="text-[#eeeeee]/60">•</span>
-                <div className="flex items-center gap-1 text-[#eeeeee]/60">
-                  <Building2 className="w-4 h-4" />
-                  {systemData.company}
-                </div>
-              </div>
-              {/* Mostra le date di creazione e aggiornamento vicino al nome */}
-              <div className="text-sm text-[#eeeeee]/60">
-                <span>First: {systemData.first_date}</span>
-                <span className="mx-2">|</span>
-                <span>Last: {systemData.last_date}</span>
+            <div className="flex items-center gap-2">
+              <h1 className="text-2xl font-bold">{systemData.name}</h1>
+              <span className="text-[#eeeeee]/60">•</span>
+              <div className="flex items-center gap-1 text-[#eeeeee]/60">
+                <Building2 className="w-4 h-4" />
+                {systemData.company}
               </div>
             </div>
-            <p className="text-[#eeeeee]/60">Host ID: {systemData.hostid}</p>
+            <p className="text-[#eeeeee]/60">Host ID: {systemData.hostid} Pool: {systemData.pool} </p>
           </div>
         </div>
       </div>
@@ -703,7 +695,7 @@ function SystemDetail() {
       <div className="bg-[#0b3c43] rounded-lg p-6 shadow-lg border border-[#22c1d4]/10">
         <div className="flex items-center gap-2 mb-6">
           <Activity className="w-6 h-6 text-[#22c1d4]" />
-          <h2 className="text-xl text-[#f8485e] font-semibold">State Vector Analysis</h2>
+          <h2 className="text-xl text-[#f8485e] font-semibold">Behaviour Analysis</h2>
         </div>
         <StateVectorChart hostId={systemData.hostid} pool={systemData.pool} />
       </div>

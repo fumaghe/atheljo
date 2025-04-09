@@ -1,4 +1,3 @@
-// src/pages/CompaniesDetail/CompanyDetail.tsx
 import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { 
@@ -23,6 +22,7 @@ interface SystemData {
   name: string;
   hostid: string;
   pool: string;
+  unit_id: string;    // NUOVO CAMPO per collegare hostid e pool insieme
   type: string;
   used: number;
   avail: number;
@@ -99,6 +99,7 @@ export default function CompanyDetail() {
             name: data.name || '',
             hostid: data.hostid || '',
             pool: data.pool || '',
+            unit_id: data.unit_id || '', // lettura del nuovo campo
             type: data.type || '',
             used: Number(data.used),
             avail: Number(data.avail),
@@ -136,12 +137,15 @@ export default function CompanyDetail() {
           else criticalCount++;
         });
 
+        // Calcolo del numero totale di sistemi utilizzando unit_id per identificare univocamente il sistema
+        const totalSystems = new Set(systemsParsed.map(s => s.unit_id)).size;
+
         // Esempio di "company healthScore" (semplificato)
         const companyHealthScore = 75; // Puoi personalizzare il calcolo
 
         const computedCompanyStats: CompanyStats = {
           name: decodeURIComponent(companyName!),
-          totalSystems: systemsParsed.length,
+          totalSystems, // usa il numero di unit_id univoci
           healthyCount,
           warningCount,
           criticalCount,
@@ -302,7 +306,7 @@ export default function CompanyDetail() {
                 </div>
                 <div className="flex justify-between mt-1 text-xs text-white">
                   <span>{`${(companyStats.usedCapacity / 1024).toFixed(2)} TB`}</span>
-                  <span>{`${(companyStats.totalCapacity / 1024).toFixed(2)} TB`}</span>
+                  <span>{`${((companyStats.usedCapacity + companyStats.totalCapacity) / 1024).toFixed(2)} TB`}</span>
                 </div>
                 <div className="text-sm text-[#eeeeee]/60 mt-2">
                   Systems capacity usage
@@ -376,7 +380,7 @@ export default function CompanyDetail() {
           const score = calculateSystemHealthScore(system);
           const performanceColor = system.avg_time >= 4 && system.avg_time <= 6 ? 'text-[#22c1d4]' : 'text-[#f8485e]';
           return (
-            <div key={system.hostid} className="bg-[#0b3c43] rounded-lg p-6 shadow-lg">
+            <div key={system.unit_id} className="bg-[#0b3c43] rounded-lg p-6 shadow-lg">
               <div className="flex justify-between items-start mb-4">
                 <div className="flex items-center gap-3">
                   <Server className="w-6 h-6 text-[#22c1d4]" />
@@ -427,7 +431,7 @@ export default function CompanyDetail() {
                   </div>
                   <div className="flex justify-between mt-1 text-xs text-white">
                     <span>{`${(system.used / 1024).toFixed(2)} TB`}</span>
-                    <span>{`${(system.avail / 1024).toFixed(2)} TB`}</span>
+                    <span>{`${((system.avail + system.used) / 1024).toFixed(2)} TB`}</span>
                   </div>
                 </div>
 
@@ -465,7 +469,7 @@ export default function CompanyDetail() {
                 </div>
 
                 <button
-                  onClick={() => navigate(`/systems/${system.hostid}`)}
+                  onClick={() => navigate(`/systems/${system.unit_id}`)}
                   className="w-full py-2 mt-4 bg-[#22c1d4] text-[#06272b] rounded-lg font-semibold hover:bg-[#22c1d4]/90 transition-colors"
                 >
                   View Details

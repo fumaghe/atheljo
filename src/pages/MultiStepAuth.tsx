@@ -137,6 +137,9 @@ const MultiStepAuth: React.FC = () => {
   const { isAuthenticated, user, login, updateUser, isInitializingSession } = useAuth();
   const [currentUser, setCurrentUser] = useState(user);
 
+  // Controllo se il contesto è sicuro: HTTPS oppure localhost
+  const isSecureContext = window.location.protocol === 'https:' || window.location.hostname === 'localhost';
+
   useEffect(() => {
     if (!currentUser) {
       const stored = localStorage.getItem('aiopsUser');
@@ -334,9 +337,15 @@ const MultiStepAuth: React.FC = () => {
           const generated = generateSecurePassword();
           setNewPassword(generated);
           setConfirmPassword(generated);
-          navigator.clipboard.writeText(generated);
-          setCopyMessage('Password copied!');
-          setTimeout(() => setCopyMessage(''), 3000);
+          // Utilizza Clipboard API solo se supportata
+          if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+            navigator.clipboard.writeText(generated)
+              .then(() => {
+                setCopyMessage('Password copied!');
+                setTimeout(() => setCopyMessage(''), 3000);
+              })
+              .catch((err) => console.error('Clipboard API error:', err));
+          }
           setIsGenerating(false);
           return prev;
         }
@@ -590,20 +599,26 @@ const MultiStepAuth: React.FC = () => {
                   disabled={isGenerating}
                   aria-label="New Password"
                 />
-                <button
-                  type="button"
-                  onClick={handleAutoGenerate}
-                  className="absolute inset-y-0 right-0 pr-3 flex items-center"
-                  title="Generate secure password"
-                  aria-label="Generate secure password"
-                >
-                  <Shuffle className="w-6 h-6 text-[#00cfe8] hover:text-[#f8485e]" />
-                  {copyMessage && (
-                    <div className="absolute -top-6 right-0 bg-[#042c2e] text-[#f8485e] text-xs px-2 py-1 rounded">
-                      {copyMessage}
-                    </div>
-                  )}
-                </button>
+                {isSecureContext ? (
+                  <button
+                    type="button"
+                    onClick={handleAutoGenerate}
+                    className="absolute inset-y-0 right-0 pr-3 flex items-center"
+                    title="Generate secure password"
+                    aria-label="Generate secure password"
+                  >
+                    <Shuffle className="w-6 h-6 text-[#00cfe8] hover:text-[#f8485e]" />
+                    {copyMessage && (
+                      <div className="absolute -top-6 right-0 bg-[#042c2e] text-[#f8485e] text-xs px-2 py-1 rounded">
+                        {copyMessage}
+                      </div>
+                    )}
+                  </button>
+                ) : (
+                  <div className="absolute inset-y-0 right-0 pr-3 flex items-center">
+                    <span className="text-sm text-red-500">Generazione non disponibile su HTTP</span>
+                  </div>
+                )}
               </div>
               {isGenerating && renderGenerationDots()}
               {newPassword && !isGenerating && (

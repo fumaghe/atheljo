@@ -177,7 +177,7 @@ export default function Sidebar() {
                   transition={{ duration: 0.2 }}
                   className="font-medium ml-3 whitespace-nowrap"
                 >
-                  Subscription
+                  SmartCARE
                 </motion.span>
               )}
             </>
