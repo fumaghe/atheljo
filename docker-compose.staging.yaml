@@ -1,0 +1,58 @@
+version: "3.8"
+
+
+networks:
+
+  avalon_backend:
+    name: avalon_backend
+
+  traefik_avalon:
+    external: true
+
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.prod
+    container_name: avalon-backend
+    hostname: avalon-backend
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - avalon_backend
+    environment:
+      - NODE_ENV=production
+      - BACKEND_ENV=${BACKEND_ENV}
+      - ARCHIMEDES_ENV_B64=${ARCHIMEDES_ENV_B64}
+      - EMAIL_PASSWORD=${EMAIL_PASSWORD}
+      - EMAIL_USER=${EMAIL_USER}
+      - FIRESTORE_CREDENTIALS_PATH=/app/credentials.json
+    volumes:
+      - ./secrets/credentials.json:/app/credentials.json:ro
+
+  nginx:
+    build:
+      context: .
+      dockerfile: Dockerfile.nginx
+    container_name: avalon-nginx
+    hostname: avalon-nginx
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+    dns: 127.0.0.11
+    networks:
+      - avalon_backend
+      - traefik_avalon
+    ports:
+      - "3080:80"
+    depends_on:
+      - backend
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=traefik_avalon"
+      - "traefik.http.routers.avalon-nginx.entrypoints=websecure"
+      - "traefik.http.routers.avalon-nginx.rule=Host(`avalon.staging.storvix.eu`)"
+      - "traefik.http.routers.avalon-nginx.tls=true"
+      - "traefik.http.routers.avalon-nginx.service=avalon-nginx"
+      - "traefik.http.services.avalon-nginx.loadbalancer.server.port=3080"
