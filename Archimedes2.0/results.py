@@ -6,10 +6,10 @@ import logging
 from scipy.constants import giga
 from datetime import datetime, timedelta
 import numpy as np
-
 import utils 
 
 MAX_TIMEFRAME_HOURS = 24
+
 
 def capacity_trends_table(raw_data_telemetry: pd.DataFrame) -> pd.DataFrame:
     """ 
