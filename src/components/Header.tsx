@@ -111,39 +111,6 @@ export default function Header() {
 
       {/* Contenuti a destra */}
       <div className="flex items-center gap-4 py-2">
-        <div className="flex items-center gap-3">
-          {lastUpdate ? (
-            <span className="text-sm text-[#eeeeee]/60">
-              Last update: {lastUpdate.toLocaleTimeString()}
-            </span>
-          ) : (
-            <span className="text-sm text-[#eeeeee]/60">No updates yet</span>
-          )}
-          <button
-            onClick={handleUpdateData}
-            disabled={isUpdating}
-            className="
-              relative
-              px-4 py-2
-              bg-[#0b3c43]
-              rounded-lg
-              text-[#22c1d4]
-              hover:bg-[#0b3c43]/80
-              transition-colors
-              disabled:opacity-50
-              flex items-center gap-2
-            "
-          >
-            {isUpdating ? 'Updating...' : 'Update Data'}
-            {isUpdating && <Loader2 className="w-5 h-5 animate-spin" />}
-          </button>
-          {updateStatus === 'success' && !isUpdating && (
-            <CheckCircle className="w-5 h-5 text-green-400" />
-          )}
-          {updateStatus === 'error' && !isUpdating && (
-            <XCircle className="w-5 h-5 text-red-400" />
-          )}
-        </div>
 
         {/* Icona utente e menu */}
         <div className="relative">
