@@ -48,7 +48,7 @@ function AppContent() {
         <Route path="systems">
           <Route index element={<Companies />} />
           <Route path="company/:companyName" element={<CompanyDetail />} />
-          <Route path=":hostId" element={<SystemDetail />} />
+          <Route path=":unitId" element={<SystemDetail />} />
         </Route>
         <Route path="reports" element={<Reports />} />
         <Route path="analytics" element={<Analytics />} />

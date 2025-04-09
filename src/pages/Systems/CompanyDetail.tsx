@@ -39,8 +39,7 @@ interface SystemData {
   company: string;
 }
 
-// Interface per i sistemi aggregati: se c'è un solo record valido per unità, lo usiamo direttamente; 
-// se sono presenti più record validi per lo stesso unit_id e pool, ne viene selezionato quello con la last_date più recente
+// Interface per i sistemi aggregati: l'aggregazione per pool è fatta soltanto se i record appartengono allo stesso unit_id
 interface AggregatedSystem extends SystemData {
   pools: string[];
   count: number;
@@ -124,15 +123,13 @@ export default function CompanyDetail() {
           });
         });
 
-        // Raggruppa per unit_id e poi per pool, restando all'interno dello stesso unit_id.
-        // Così, se due record hanno lo stesso nome pool ma appartengono a unit_id differenti, non vengono aggregati insieme.
+        // Raggruppa per unit_id e poi per pool all’interno dello stesso unit_id.
         const unitGroups: { [unitId: string]: { [pool: string]: SystemData } } = {};
         rawSystems.forEach(system => {
-          // Raggruppa per unit_id
           if (!unitGroups[system.unit_id]) {
             unitGroups[system.unit_id] = {};
           }
-          // Raggruppa per pool all'interno dello stesso unit_id: se esiste già, prendi il record con last_date più recente.
+          // Raggruppa per pool (all’interno dello stesso unit_id): se già presente, prendi quello con last_date più recente.
           if (!unitGroups[system.unit_id][system.pool]) {
             unitGroups[system.unit_id][system.pool] = system;
           } else if (new Date(system.last_date) > new Date(unitGroups[system.unit_id][system.pool].last_date)) {
@@ -146,22 +143,18 @@ export default function CompanyDetail() {
         cutoff.setMonth(now.getMonth() - 1);
 
         // Per ogni unità, filtra i record per pool:
-        // - Tieni i record con last_date ≥ cutoff.
-        // - Se non ce ne sono, usa il record attivo (sending_telemetry true) con last_date più recente.
+        // - Se esistono record con last_date ≥ cutoff, li si utilizza.
+        // - Se non ce ne sono, allora si usa comunque l’insieme completo dei record (ossia, la pool con la last_date più recente, anche se "vecchia")
         const aggregatedSystems: AggregatedSystem[] = [];
         Object.keys(unitGroups).forEach(unitId => {
           const poolRecords = Object.values(unitGroups[unitId]);
-          // Filtra per record "recenti"
           let validPoolRecords = poolRecords.filter(record => new Date(record.last_date) >= cutoff);
-          // Se non ci sono record recenti per questa unità, allora si prova il fallback: usare quelli attivi
           if (validPoolRecords.length === 0) {
-            validPoolRecords = poolRecords.filter(record => record.sending_telemetry);
+            // Fallback: usa tutti i record di quella unità
+            validPoolRecords = poolRecords;
           }
-          // Se ancora non c'è nulla, ignora questa unità
-          if (validPoolRecords.length === 0) return;
-
           const count = validPoolRecords.length;
-          // Se c'è un solo record valido, lo usiamo direttamente
+          // Se c'è un solo record valido, lo usiamo direttamente; altrimenti, tra i validi, prendiamo quello con la last_date più recente.
           if (count === 1) {
             const record = validPoolRecords[0];
             aggregatedSystems.push({
@@ -170,7 +163,6 @@ export default function CompanyDetail() {
               count
             });
           } else {
-            // In questo scenario, invece di sommare i valori, scegliamo la pool con la last_date più recente
             const representativeRecord = validPoolRecords.reduce((prev, curr) =>
               new Date(prev.last_date) > new Date(curr.last_date) ? prev : curr
             );
@@ -226,7 +218,7 @@ export default function CompanyDetail() {
           }
         };
 
-        // Verifica delle autorizzazioni utente in base al ruolo
+        // Verifica delle autorizzazioni in base al ruolo utente
         if (user) {
           if (user.role === 'admin_employee') {
             if (
@@ -256,14 +248,14 @@ export default function CompanyDetail() {
     }
   }, [companyName, user]);
 
-  // Funzione helper per il colore dello health score
+  // Helper per definire il colore dello health score
   const getHealthScoreColor = (score: number): string => {
     if (score >= 80) return 'text-[#22c1d4]';
     if (score >= 50) return 'text-[#eeeeee]';
     return 'text-[#f8485e]';
   };
 
-  // Filtro dei sistemi (filtra in base ai parametri impostati)
+  // Filtra i sistemi in base ai filtri selezionati
   const filteredSystems = systems.filter(system => {
     if (filters.type !== 'all' && !system.type.includes(filters.type)) return false;
     if (filters.status !== 'all') {
