@@ -126,10 +126,10 @@ pipeline {
             printf "BACKEND_ENV=%s\nARCHIMEDES_ENV_B64=%s\nEMAIL_PASSWORD=%s\nEMAIL_USER=%s\n" "$BACKEND_ENV" "$ARCHIMEDES_ENV_B64" "$EMAIL_PASSWORD" "$EMAIL_USER" > env.tmp
             
             # Esegue il build per aggiornare solo i servizi modificati
-            sudo docker compose -p avalon -f docker-compose.prod.yaml --env-file env.tmp build
+            sudo docker compose -p avalon -f docker-compose.staging.yaml --env-file env.tmp build
             
             # Avvia i container senza forzare la ricreazione, così aggiornando solo quanto nuovo
-            sudo docker compose -p avalon -f docker-compose.prod.yaml --env-file env.tmp up -d
+            sudo docker compose -p avalon -f docker-compose.staging.yaml --env-file env.tmp up -d
           '''
         }
       }
