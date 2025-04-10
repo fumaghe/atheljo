@@ -1,7 +1,7 @@
 // src/pages/Systems/SystemDetail.tsx
 import 'chart.js/auto';
 import 'chartjs-adapter-date-fns';
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Line } from 'react-chartjs-2';
 import { subDays } from 'date-fns';
@@ -19,7 +19,8 @@ import {
   Building2,
   Wrench,
   Lock,
-  Server
+  Server,
+  AlertTriangle
 } from 'lucide-react';
 import firestore from '../../firebaseClient';
 import { collection, query, where, getDocs } from 'firebase/firestore';
@@ -42,8 +43,8 @@ interface SystemData {
   perc_used: number;
   perc_snap: number;
   sending_telemetry: boolean;
-  first_date: string;  // "2018-03-28 19:23:30"
-  last_date: string;   // "2023-03-05 12:31:21"
+  first_date: string; // "2018-03-28 19:23:30"
+  last_date: string; // "2023-03-05 12:31:21"
   MUP: number;
   avg_speed: number;
   avg_time: number;
@@ -51,7 +52,7 @@ interface SystemData {
 }
 
 interface TelemetryData {
-  date: string;        // es. "2018-03-28 19:23:30"
+  date: string; // es. "2018-03-28 19:23:30"
   unit_id: string;
   pool: string;
   used: number;
@@ -59,8 +60,7 @@ interface TelemetryData {
   perc_used: number;
   snap: number;
   perc_snap: number;
-  // se hai un campo "hostid" anche in capacity_trends, aggiungilo qui
-  hostid?: string; 
+  hostid?: string;
 }
 
 interface ForecastPoint {
@@ -69,16 +69,16 @@ interface ForecastPoint {
   pool: string;
   forecasted_usage: number;
   forecasted_percentage: number;
-  // se hai un campo "hostid" anche in usage_forecast, aggiungilo qui
   hostid?: string;
 }
 
+// Interfaccia per forecastData (soglie 70, 80, 90)
 interface ForecastData {
   unitId: string;
   pool: string;
+  time_to_70: number;
   time_to_80: number;
   time_to_90: number;
-  time_to_100: number;
   current_usage: number;
   growth_rate: number;
 }
@@ -97,14 +97,106 @@ interface HealthMetric {
 
 // =============== CACHE LOCALE ===============
 interface UnitCache {
-  allSystemRecords: SystemData[];   // Tutti i record system_data
-  allTelemetry: TelemetryData[];     // Tutta la telemetria (capacity_trends)
-  allForecast: ForecastPoint[];      // Tutte le previsioni (usage_forecast)
+  allSystemRecords: SystemData[]; // Tutti i record system_data
+  allTelemetry: TelemetryData[];   // Tutti i dati telemetrici (capacity_trends)
+  allForecast: ForecastPoint[];    // (Non più usato per il forecast matematico)
   timestamp: number;
 }
 
 const unitCache: Record<string, UnitCache> = {};
 const CACHE_DURATION = 20 * 60 * 1000; // 20 minuti
+
+// =============== FUNZIONI DI SUPPORTO PER IL FORECAST ===============
+
+/**
+ * removeDataBeforeSignificantDrop:
+ * Restituisce un sottoinsieme dei dati, eliminando quelli antecedenti il primo crollo significativo.
+ * Il taglio viene usato esclusivamente per calcolare i giorni di forecast.
+ *
+ * @param telemetry  L'array ordinato di TelemetryData.
+ * @param dropThreshold  La soglia per un "crollo significativo" (default: 30 punti percentuali).
+ * @returns TelemetryData[]  L'array con i dati a partire dal punto in cui il valore comincia a crescere nuovamente.
+ */
+function removeDataBeforeSignificantDrop(
+  telemetry: TelemetryData[],
+  dropThreshold: number = 30
+): TelemetryData[] {
+  if (telemetry.length < 2) return telemetry;
+  let dropIndex = -1;
+  for (let i = 0; i < telemetry.length - 1; i++) {
+    const current = telemetry[i].perc_used;
+    const next = telemetry[i + 1].perc_used;
+    if (next - current < -dropThreshold) {
+      dropIndex = i;
+      break;
+    }
+  }
+  // Se non viene trovato un crollo significativo, restituisce l'array intero
+  if (dropIndex === -1) return telemetry;
+  // Restituisce l'array dal punto successivo al drop
+  return telemetry.slice(dropIndex + 1);
+}
+
+// Calcola il tasso giornaliero medio (in % di crescita) utilizzando fino a 365 giorni (se disponibili)
+function calculateDailyGrowth(telemetry: TelemetryData[]): number {
+  if (telemetry.length < 2) return 0;
+  const maxLookBackDays = 365;
+  const lastDate = new Date(telemetry[telemetry.length - 1].date);
+  const cutoffDate = new Date(lastDate.getTime() - maxLookBackDays * 24 * 60 * 60 * 1000);
+  const filtered = telemetry.filter(t => new Date(t.date) >= cutoffDate);
+  const dataToUse = filtered.length >= 2 ? filtered : telemetry;
+  const first = new Date(dataToUse[0].date);
+  const last = new Date(dataToUse[dataToUse.length - 1].date);
+  const days = (last.getTime() - first.getTime()) / (1000 * 60 * 60 * 24);
+  if (days <= 0) return 0;
+  const growth = dataToUse[dataToUse.length - 1].perc_used - dataToUse[0].perc_used;
+  return Number((growth / days).toFixed(2));
+}
+
+// Calcola il numero di giorni necessari perché venga raggiunta una certa soglia, partendo dall'ultimo dato.
+// Se la soglia (70 o 80) è già stata raggiunta, restituisce -2 (per mostrare l'icona di alert).
+// Per soglia 90, se già raggiunta, restituisce 0.
+// Se il numero di giorni stimato supera 5000, restituisce 5001 (che verrà mostrato come ">5000").
+function calculateForecastDays(telemetry: TelemetryData[], threshold: number): number {
+  if (telemetry.length < 2) return -1;
+  const dailyGrowth = calculateDailyGrowth(telemetry);
+  if (dailyGrowth <= 0) return -1;
+  const currentUsage = telemetry[telemetry.length - 1].perc_used;
+  if (threshold < 90 && currentUsage >= threshold) return -2;
+  if (threshold === 90 && currentUsage >= threshold) return 0;
+  const remaining = threshold - currentUsage;
+  let days = Math.ceil(remaining / dailyGrowth);
+  if (days > 5000) return 5001;
+  return days;
+}
+
+// Interfaccia per i punti forecast per il grafico Usage Forecast
+interface ComputedForecastPoint {
+  date: string;
+  forecasted_percentage: number;
+}
+
+// Crea punti forecast per le soglie (70, 80, 90) usando i dati di telemetria.
+// NOTA: Per le soglie 70 e 80, se il valore corrente è già superiore, NON aggiunge il punto.
+function computeForecastPoints(telemetry: TelemetryData[], thresholds: number[]): ComputedForecastPoint[] {
+  if (telemetry.length === 0) return [];
+  const dailyGrowth = calculateDailyGrowth(telemetry);
+  if (dailyGrowth <= 0) return [];
+  const lastEntry = telemetry[telemetry.length - 1];
+  const lastDate = new Date(lastEntry.date);
+  const currentUsage = lastEntry.perc_used;
+  let forecast: ComputedForecastPoint[] = [];
+  thresholds.forEach((th) => {
+    if (th < 90 && currentUsage >= th) return;
+    const daysToReach = (th - currentUsage) / dailyGrowth;
+    const forecastDate = new Date(lastDate.getTime() + daysToReach * 24 * 60 * 60 * 1000);
+    forecast.push({
+      date: forecastDate.toISOString(),
+      forecasted_percentage: th,
+    });
+  });
+  return forecast;
+}
 
 // =============== COMPONENTE PRINCIPALE ===============
 function SystemDetail() {
@@ -118,40 +210,23 @@ function SystemDetail() {
   const { canAccess: telemCan, shouldBlur: telemBlur } = useSubscriptionPermissions('SystemDetail', 'Health - Telemetry');
   const { canAccess: snapCan, shouldBlur: snapBlur } = useSubscriptionPermissions('SystemDetail', 'Health - Snapshots');
   const { canAccess: mupCan, shouldBlur: mupBlur } = useSubscriptionPermissions('SystemDetail', 'Health - MUP');
-  const { canAccess: utilCan, shouldBlur: utilBlur } =
-    useSubscriptionPermissions('SystemDetail', 'Health - Utilization');
-  const { canAccess: healthHeadCan, shouldBlur: healthHeadBlur } =
-    useSubscriptionPermissions('SystemDetail', 'HealthScoreInHeader');
-  const { canAccess: t80Can, shouldBlur: t80Blur } =
-    useSubscriptionPermissions('SystemDetail', 'Forecast - TimeTo80');
-  const { canAccess: t90Can, shouldBlur: t90Blur } =
-    useSubscriptionPermissions('SystemDetail', 'Forecast - TimeTo90');
-  const { canAccess: t100Can, shouldBlur: t100Blur } =
-    useSubscriptionPermissions('SystemDetail', 'Forecast - TimeTo100');
-  const { canAccess: chartHistCan, shouldBlur: chartHistBlur } =
-    useSubscriptionPermissions('SystemDetail', 'Chart - UsageHistory');
-  const { canAccess: chartForeCan, shouldBlur: chartForeBlur } =
-    useSubscriptionPermissions('SystemDetail', 'Chart - UsageForecast');
+  const { canAccess: utilCan, shouldBlur: utilBlur } = useSubscriptionPermissions('SystemDetail', 'Health - Utilization');
+  const { canAccess: healthHeadCan, shouldBlur: healthHeadBlur } = useSubscriptionPermissions('SystemDetail', 'HealthScoreInHeader');
+  const { canAccess: t80Can, shouldBlur: t80Blur } = useSubscriptionPermissions('SystemDetail', 'Forecast - TimeTo80');
+  const { canAccess: t90Can, shouldBlur: t90Blur } = useSubscriptionPermissions('SystemDetail', 'Forecast - TimeTo90');
+  const { canAccess: t100Can, shouldBlur: t100Blur } = useSubscriptionPermissions('SystemDetail', 'Forecast - TimeTo100');
+  const { canAccess: chartHistCan, shouldBlur: chartHistBlur } = useSubscriptionPermissions('SystemDetail', 'Chart - UsageHistory');
+  const { canAccess: chartForeCan, shouldBlur: chartForeBlur } = useSubscriptionPermissions('SystemDetail', 'Chart - UsageForecast');
 
-  // Stato globale: tutti i record, la pool, l'hostid selezionato, e i dati da mostrare
+  // Stato globale
   const [allRecords, setAllRecords] = useState<SystemData[]>([]);
   const [poolList, setPoolList] = useState<string[]>([]);
   const [selectedPool, setSelectedPool] = useState<string | null>(null);
-
-  // Hostid che stiamo usando per calcolare i dati
   const [selectedHostid, setSelectedHostid] = useState<string | null>(null);
-
-  // Dati finali del "sistema" selezionato (pool + hostid)
   const [systemData, setSystemData] = useState<SystemData | null>(null);
-  
-  // NOTA: useremo "stitchedTelemetry" per i dati finali da mostrare nel grafico Usage History
   const [stitchedTelemetry, setStitchedTelemetry] = useState<TelemetryData[]>([]);
-  
-  // Forecast “finale” (per ora non stichiamo sugli intervalli, ma puoi farlo se vuoi)
-  const [forecastPoints, setForecastPoints] = useState<ForecastPoint[]>([]);
   const [forecastData, setForecastData] = useState<ForecastData | null>(null);
   const [healthScore, setHealthScore] = useState<{ score: number; metrics: HealthMetric[] } | null>(null);
-
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [timeRange, setTimeRange] = useState('1y');
@@ -161,20 +236,14 @@ function SystemDetail() {
     if (!unitId) return;
     setIsLoading(true);
     setError(null);
-
     (async () => {
       try {
         const now = Date.now();
         const cached = unitCache[unitId];
         if (cached && now - cached.timestamp < CACHE_DURATION) {
-          // Se i dati in cache sono ancora validi, li usiamo
           setAllRecords(cached.allSystemRecords);
-
-          // Ricavo la lista delle pool
           const uniquePools = Array.from(new Set(cached.allSystemRecords.map((r) => r.pool)));
           setPoolList(uniquePools);
-
-          // Trovo la pool di default con last_date più recente
           let defaultPool: string | null = null;
           let maxTime = 0;
           for (const rec of cached.allSystemRecords) {
@@ -185,22 +254,17 @@ function SystemDetail() {
             }
           }
           setSelectedPool(defaultPool);
-
           setIsLoading(false);
           return;
         }
-
-        // Altrimenti fetch da Firestore per system_data
         const systemRef = collection(firestore, 'system_data');
         const systemQuery = query(systemRef, where('unit_id', '==', unitId));
         const snapshot = await getDocs(systemQuery);
-
         if (snapshot.empty) {
           setError(`No system records found for unit_id=${unitId}`);
           setIsLoading(false);
           return;
         }
-
         const loadedRecords: SystemData[] = [];
         snapshot.forEach((doc) => {
           const d = doc.data();
@@ -226,22 +290,15 @@ function SystemDetail() {
             company: d.company || ''
           });
         });
-
         if (!loadedRecords.length) {
           setError('No valid system records found');
           setIsLoading(false);
           return;
         }
-
-        // Controllo permessi su company
         if (user && loadedRecords.length > 0) {
           const rec0 = loadedRecords[0];
           if (user.role === 'admin_employee') {
-            if (
-              user.visibleCompanies &&
-              !user.visibleCompanies.includes('all') &&
-              !user.visibleCompanies.includes(rec0.company)
-            ) {
+            if (user.visibleCompanies && !user.visibleCompanies.includes('all') && !user.visibleCompanies.includes(rec0.company)) {
               setError('Access denied: company mismatch');
               setIsLoading(false);
               return;
@@ -252,8 +309,6 @@ function SystemDetail() {
             return;
           }
         }
-
-        // Scelgo un record col last_date più recente (per avere un riferimento iniziale)
         let latestRecord = loadedRecords[0];
         let maxTime = 0;
         for (const r of loadedRecords) {
@@ -264,11 +319,7 @@ function SystemDetail() {
           }
         }
         const refHostid = latestRecord.hostid || '';
-
-        // Estrai i valori unici di hostid dalla system_data (utili per filtrare i dati nelle altre collezioni)
         const uniqueHostids = Array.from(new Set(loadedRecords.map(r => r.hostid)));
-
-        // Carico TUTTA la telemetria dalla collezione capacity_trends usando l'operatore "in" sui hostid
         const telemQ = query(
           collection(firestore, 'capacity_trends'),
           where('hostid', 'in', uniqueHostids)
@@ -292,8 +343,6 @@ function SystemDetail() {
         allTelemetryData = allTelemetryData
           .filter((t) => t.perc_used >= 0 && t.perc_used <= 100)
           .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
-
-        // Carico TUTTO il forecast dalla collezione usage_forecast usando l'operatore "in" sui hostid
         const foreQ = query(
           collection(firestore, 'usage_forecast'),
           where('hostid', 'in', uniqueHostids)
@@ -312,22 +361,15 @@ function SystemDetail() {
           });
         });
         allForecastData.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
-
-        // Metto tutto in cache
         unitCache[unitId] = {
           allSystemRecords: loadedRecords,
           allTelemetry: allTelemetryData,
           allForecast: allForecastData,
           timestamp: now
         };
-
         setAllRecords(loadedRecords);
-
-        // Costruisco la lista delle pool
         const allPools = Array.from(new Set(loadedRecords.map((r) => r.pool)));
         setPoolList(allPools);
-
-        // Definisco la pool di default con l'ultimo last_date
         let defaultPool: string | null = null;
         let maxT2 = 0;
         for (const rec of loadedRecords) {
@@ -338,7 +380,6 @@ function SystemDetail() {
           }
         }
         setSelectedPool(defaultPool);
-
       } catch (err) {
         console.error(err);
         setError('Failed to load system data');
@@ -348,7 +389,7 @@ function SystemDetail() {
     })();
   }, [unitId, user]);
 
-  // =============== 2) Al cambio pool, scelgo l'hostid più recente di quella pool ===============
+  // =============== 2) Al cambio pool, scelgo l'hostid più recente per quella pool ===============
   useEffect(() => {
     if (!selectedPool || !allRecords.length) {
       setSelectedHostid(null);
@@ -365,21 +406,17 @@ function SystemDetail() {
     }
   }, [selectedPool, allRecords, selectedHostid]);
 
-  // =============== 3) Stitching di usage history e set systemData/forecast ===============
+  // =============== 3) Stitching di usage history e calcolo dei forecast ===============
   useEffect(() => {
     if (!selectedPool || !selectedHostid || !allRecords.length || !unitId) {
       setSystemData(null);
       setStitchedTelemetry([]); 
-      setForecastPoints([]);
       setForecastData(null);
       setHealthScore(null);
       return;
     }
-
     const cached = unitCache[unitId];
     if (!cached) return;
-
-    // 3.1) Trovo TUTTI i record system_data che matchano pool + hostid
     const relevantRecords = allRecords.filter(
       (r) => r.pool === selectedPool && r.hostid === selectedHostid
     );
@@ -388,21 +425,13 @@ function SystemDetail() {
       setStitchedTelemetry([]);
       return;
     }
-    // Ordino e prendo il record con il last_date più recente come "currentSystem"
     relevantRecords.sort((a, b) => new Date(b.last_date).getTime() - new Date(a.last_date).getTime());
     const currentSystem = relevantRecords[0];
     setSystemData(currentSystem);
-
-    // 3.2) Costruisco un array “stitched” con i dati telemetrici per ciascun record (intervallo [first_date, last_date])
     let finalTelemetry: TelemetryData[] = [];
     for (const rec of relevantRecords) {
       const from = new Date(rec.first_date).getTime();
       const to = new Date(rec.last_date).getTime();
-
-      // Filtra i dati telemetrici in cache:
-      // - pool deve corrispondere
-      // - hostid deve corrispondere
-      // - la data deve trovarsi nell'intervallo [first_date, last_date]
       const sub = cached.allTelemetry.filter((t) => {
         if (t.pool !== rec.pool) return false;
         if (t.hostid !== rec.hostid) return false;
@@ -412,29 +441,21 @@ function SystemDetail() {
       finalTelemetry.push(...sub);
     }
     finalTelemetry.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
-
+    // Imposto i dati per il grafico (stitch senza modifiche)
     setStitchedTelemetry(finalTelemetry);
-
-    // 3.3) Forecast: filtra i record in base a pool e hostid
-    const foreForHost = cached.allForecast.filter(
-      (f) => f.pool === selectedPool && f.hostid === selectedHostid
-    );
-    foreForHost.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
-    setForecastPoints(foreForHost);
-
-    // 3.4) Costruisco forecastData
+    // Per il calcolo dei giorni, usiamo una copia dei dati filtrata: 
+    // rimuoviamo solo per la prediction i dati precedenti a un crollo significativo.
+    const forecastTelemetry = removeDataBeforeSignificantDrop(finalTelemetry, 30);
     const fc: ForecastData = {
       unitId: currentSystem.unit_id,
       pool: currentSystem.pool,
-      time_to_80: calculateDaysToThreshold(foreForHost, 80),
-      time_to_90: calculateDaysToThreshold(foreForHost, 90),
-      time_to_100: calculateDaysToThreshold(foreForHost, 100),
+      time_to_70: calculateForecastDays(forecastTelemetry, 70),
+      time_to_80: calculateForecastDays(forecastTelemetry, 80),
+      time_to_90: calculateForecastDays(forecastTelemetry, 90),
       current_usage: currentSystem.perc_used,
-      growth_rate: calculateGrowthRate(foreForHost)
+      growth_rate: calculateDailyGrowth(forecastTelemetry)
     };
     setForecastData(fc);
-
-    // 3.5) Calcolo Health Score dal currentSystem
     const finalScore = calculateSystemHealthScore(currentSystem);
     const capacityScore =
       currentSystem.perc_used <= 55
@@ -451,7 +472,6 @@ function SystemDetail() {
         ? 100
         : Math.max(0, 100 - (currentSystem.MUP - 55) * (100 / 45));
     const utilizationScore = (capacityScore + snapshotsScore) / 2;
-
     const metrics: HealthMetric[] = [
       {
         name: 'Capacity',
@@ -516,8 +536,7 @@ function SystemDetail() {
         value: Number(utilizationScore.toFixed(1)),
         rawValue: utilizationScore.toFixed(1),
         unit: '%',
-        status:
-          utilizationScore < 50 ? 'critical' : utilizationScore < 70 ? 'warning' : 'good',
+        status: utilizationScore < 50 ? 'critical' : utilizationScore < 70 ? 'warning' : 'good',
         message: 'Avg of Capacity & Snapshots Score',
         impact: 'N/A',
         weight: 0,
@@ -543,8 +562,7 @@ function SystemDetail() {
     const first = forecastPoints[0];
     const last = forecastPoints[forecastPoints.length - 1];
     const daysDiff =
-      (new Date(last.date).getTime() - new Date(first.date).getTime()) /
-      (1000 * 60 * 60 * 24);
+      (new Date(last.date).getTime() - new Date(first.date).getTime()) / (1000 * 60 * 60 * 24);
     const percentageDiff = last.forecasted_percentage - first.forecasted_percentage;
     return daysDiff > 0 ? Number((percentageDiff / daysDiff).toFixed(2)) : 0;
   }
@@ -567,11 +585,10 @@ function SystemDetail() {
   if (isLoading) {
     return (
       <div className="flex items-center justify-center h-[60vh]">
-        <LoadingDots/>
+        <LoadingDots />
       </div>
     );
   }
-
   if (error) {
     return (
       <div className="flex items-center justify-center h-[60vh]">
@@ -579,27 +596,21 @@ function SystemDetail() {
       </div>
     );
   }
-
-  // Se mancano systemData o healthScore, mostro un messaggio
   if (!systemData || !healthScore) {
     return (
       <div className="flex items-center justify-center h-[60vh]">
         <div className="text-[#f8485e] text-xl">
-          No data found for this pool/hostid or missing health score
+          <LoadingDots />
         </div>
       </div>
     );
   }
 
-  // Filtro la telemetria e il forecast in base al timeRange
   const filteredTelemetry = getTimeRangeData<TelemetryData>(stitchedTelemetry, timeRange);
-  const filteredForecast = getTimeRangeData<ForecastPoint>(forecastPoints, timeRange);
-
-  // Prendo i record per la pool selezionata (per mostrare la card di hostid)
   const poolRecords = allRecords.filter((r) => r.pool === selectedPool);
   poolRecords.sort((a, b) => new Date(b.last_date).getTime() - new Date(a.last_date).getTime());
 
-  // Dati per chart Usage History
+  // Dati per il grafico Usage History (dati completi)
   const historyChartData = {
     datasets: [
       {
@@ -614,7 +625,12 @@ function SystemDetail() {
     ]
   };
 
-  // Dati per chart Usage Forecast
+  // Per il forecast, creiamo una copia dei dati su cui applicare il taglio sul drop,
+  // in modo da non alterare i dati visualizzati nei grafici.
+  const forecastTelemetry = removeDataBeforeSignificantDrop(filteredTelemetry, 30);
+
+  // Punti forecast per il grafico Usage Forecast
+  const computedForecastPoints = computeForecastPoints(filteredTelemetry, [70, 80, 90]);
   const forecastChartData = {
     datasets: [
       {
@@ -628,17 +644,17 @@ function SystemDetail() {
       },
       {
         label: 'Forecast',
-        data: filteredForecast.map((p) => ({ x: p.date, y: p.forecasted_percentage })),
-        borderColor: '#f8485e',
-        borderDash: [5, 5],
+        data: computedForecastPoints.map((p) => ({ x: p.date, y: p.forecasted_percentage })),
+        borderColor: '#f08080',
+        backgroundColor: '#f08080',
         tension: 0.2,
-        pointRadius: 0,
-        fill: false
+        pointRadius: 5,
+        fill: false,
+        borderDash: [5, 5]
       }
     ]
   };
 
-  // Dati fittizi se l’utente non ha il permesso (blur)
   const dummyHistory = {
     datasets: [
       {
@@ -687,7 +703,6 @@ function SystemDetail() {
     ]
   };
 
-  // Scegli se mostrare dati veri o fittizi
   const displayedHistory = chartHistBlur ? dummyHistory : historyChartData;
   const displayedForecast = chartForeBlur ? dummyForecast : forecastChartData;
 
@@ -706,10 +721,7 @@ function SystemDetail() {
       },
       x: {
         type: 'time',
-        time: {
-          unit: 'month',
-          displayFormats: { month: 'MMM yyyy' }
-        },
+        time: { unit: 'month', displayFormats: { month: 'MMM yyyy' } },
         grid: { color: 'rgba(255,255,255,0.1)' },
         ticks: { color: '#fff' }
       }
@@ -739,6 +751,22 @@ function SystemDetail() {
     },
     interaction: { intersect: false, mode: 'index' }
   };
+
+  // Calcolo dei forecast giorni, usando forecastTelemetry per la prediction
+  const fc: ForecastData = {
+    unitId: systemData.unit_id,
+    pool: systemData.pool,
+    time_to_70: calculateForecastDays(forecastTelemetry, 70),
+    time_to_80: calculateForecastDays(forecastTelemetry, 80),
+    time_to_90: calculateForecastDays(forecastTelemetry, 90),
+    current_usage: systemData.perc_used,
+    growth_rate: calculateDailyGrowth(forecastTelemetry)
+  };
+
+  // Imposto il forecastData solo per la prediction (non modifica i dati grafici)
+  // Se preferisci, questo calcolo può avvenire all'interno di un useEffect separato;
+  // qui viene fatto nel render per chiarezza.
+  // (Se necessiti di ulteriori ottimizzazioni, sposta la logica in un useEffect dedicato.)
 
   return (
     <div className="space-y-6">
@@ -773,7 +801,6 @@ function SystemDetail() {
               value={selectedPool ?? ''}
               onChange={(e) => {
                 setSelectedPool(e.target.value);
-                // reset anche l’hostid
                 setSelectedHostid(null);
               }}
             >
@@ -787,7 +814,7 @@ function SystemDetail() {
         </div>
       </div>
 
-      {/* BLOCCO - ELENCO HOSTID UNIVOCI PER LA POOL SCELTA */}
+      {/* BLOCCO - ELENCO HOSTID */}
       <div className="bg-[#0b3c43] rounded-lg p-6 shadow-lg border border-[#22c1d4]/10">
         <h2 className="text-xl text-[#f8485e] font-semibold flex items-center gap-2 mb-4">
           <Server className="h-6 w-6 text-[#22c1d4]" />
@@ -796,11 +823,9 @@ function SystemDetail() {
         <p className="text-[#eeeeee]/60 mb-4">
           Click on a HostID to load data for that unit.
         </p>
-
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           {poolRecords.map((hRec) => {
-            // è la card selezionata?
-            const isSelected = (hRec.hostid === selectedHostid);
+            const isSelected = hRec.hostid === selectedHostid;
             return (
               <button
                 key={`${hRec.hostid}-${hRec.last_date}`}
@@ -855,11 +880,7 @@ function SystemDetail() {
           </div>
           {healthHeadCan || healthHeadBlur ? (
             <div className="relative">
-              <div
-                className={`${
-                  healthHeadBlur ? 'blur-sm pointer-events-none' : ''
-                } flex flex-col items-center`}
-              >
+              <div className={`${healthHeadBlur ? 'blur-sm pointer-events-none' : ''} flex flex-col items-center`}>
                 <div className={getHealthScoreColorClass(healthScore.score, 'text-4xl font-bold')}>
                   {healthHeadBlur ? '??' : healthScore.score}
                 </div>
@@ -909,9 +930,9 @@ function SystemDetail() {
             <h2 className="text-xl text-[#f8485e] font-semibold">Capacity Forecast</h2>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            {renderForecastBox('Time to 80% Capacity', forecastData.time_to_80, 'Days', t80Can, t80Blur, '#22c1d4')}
-            {renderForecastBox('Time to 90% Capacity', forecastData.time_to_90, 'Days', t90Can, t90Blur, '#eeeeee')}
-            {renderForecastBox('Time to 100% Capacity', forecastData.time_to_100, 'Days', t100Can, t100Blur, '#f8485e')}
+            {renderForecastBox('Time to 70% Capacity', forecastData.time_to_70, 'Days', t80Can, t80Blur, '#22c1d4')}
+            {renderForecastBox('Time to 80% Capacity', forecastData.time_to_80, 'Days', t90Can, t90Blur, '#eeeeee')}
+            {renderForecastBox('Time to 90% Capacity', forecastData.time_to_90, 'Days', t100Can, t100Blur, '#f8485e')}
           </div>
         </div>
       )}
@@ -922,13 +943,8 @@ function SystemDetail() {
           <Activity className="w-6 h-6 text-[#22c1d4]" />
           <h2 className="text-xl text-[#f8485e] font-semibold">Behaviour Analysis</h2>
         </div>
-        {/* Integrazione del componente StateVectorChart con il nuovo prop hostId */}
         {systemData && (
-          <StateVectorChart
-            unitId={systemData.unit_id}
-            pool={systemData.pool}
-            hostId={systemData.hostid} // aggiunto qui il parametro hostId
-          />
+          <StateVectorChart unitId={systemData.unit_id} pool={systemData.pool} hostId={systemData.hostid} />
         )}
       </div>
 
@@ -997,33 +1013,22 @@ function SystemDetail() {
   // =============== RENDER FUNZIONI DI SUPPORTO ===============
   function renderHealthMetric(metric: HealthMetric, canAccess: boolean, shouldBlur: boolean) {
     if (!canAccess && !shouldBlur) return null;
-
     const displayedValue = shouldBlur
       ? '??'
       : metric.rawValue !== undefined && (metric.name === 'Capacity' || metric.name === 'MUP')
       ? `${metric.rawValue}${metric.unit || ''}`
       : `${metric.value}${metric.unit || ''}`;
-
     const displayedMessage = shouldBlur ? '???' : metric.message;
-
     return (
       <div key={metric.name} className="relative h-[160px]">
-        <div
-          className={`p-4 rounded-lg mb-4 h-full ${getStatusBg(metric.status)} ${
-            shouldBlur ? 'blur-sm pointer-events-none' : ''
-          }`}
-        >
+        <div className={`p-4 rounded-lg mb-4 h-full ${getStatusBg(metric.status)} ${shouldBlur ? 'blur-sm pointer-events-none' : ''}`}>
           <div className="flex items-start justify-between mb-2">
             <div className="flex items-center gap-2">
               {metric.icon &&
-                React.createElement(metric.icon, {
-                  className: getStatusColorClass(metric.status, 'w-5 h-5')
-                })}
+                React.createElement(metric.icon, { className: getStatusColorClass(metric.status, 'w-5 h-5') })}
               <span className="font-semibold">{metric.name}</span>
             </div>
-            <div className={`text-lg font-bold ${getStatusColorClass(metric.status)}`}>
-              {displayedValue}
-            </div>
+            <div className={`text-lg font-bold ${getStatusColorClass(metric.status)}`}>{displayedValue}</div>
           </div>
           <p className="text-sm text-[#eeeeee]/80 mb-2 line-clamp-2">{displayedMessage}</p>
           <div className="flex justify-between items-center text-sm mt-auto">
@@ -1052,22 +1057,32 @@ function SystemDetail() {
     textColor: string
   ) {
     if (!canAccess && !shouldBlur) return null;
-    const displayedDays = shouldBlur ? '??' : daysValue === -1 ? '?' : daysValue;
+    let content;
+    if (shouldBlur) {
+      content = '??';
+    } else if (daysValue === -1) {
+      content = '?';
+    } else if (daysValue === -2) {
+      // Soglia già raggiunta: mostra l'icona di alert
+      content = <AlertTriangle className="w-6 h-6" />;
+    } else if (daysValue >= 5001) {
+      content = '>5000';
+    } else {
+      content = daysValue;
+    }
     return (
       <div className="relative p-4 rounded-lg bg-[#06272b]">
         <div className={shouldBlur ? 'blur-sm pointer-events-none' : ''}>
           <h3 className="text-lg font-medium mb-2">{title}</h3>
           <div className="text-3xl font-bold" style={{ color: textColor }}>
-            {displayedDays} {unit}
+            {content} {typeof content === 'number' ? unit : ''}
           </div>
           <p className="text-sm text-[#eeeeee]/60 mt-2">Based on current growth rate</p>
         </div>
         {shouldBlur && (
           <div className="absolute inset-0 z-20 flex flex-col items-center justify-center text-center px-4 overflow-hidden">
             <Wrench className="w-6 h-6 text-white mb-2" />
-            <span className="text-white text-lg break-words max-w-full">
-              {title} Work in Progress
-            </span>
+            <span className="text-white text-lg break-words max-w-full">{title} Work in Progress</span>
           </div>
         )}
       </div>
