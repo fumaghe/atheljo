@@ -10,6 +10,7 @@ export interface CapacityData {
 }
 
 export interface SystemData {
+  unit_id: string; 
   name: string;
   hostid: string;
   pool: string;

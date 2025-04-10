@@ -1,9 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { 
+import {
   ArrowLeft,
-  Server, 
-  AlertTriangle, 
+  Server,
+  AlertTriangle,
   CheckCircle,
   Building2,
   Database,
@@ -15,14 +15,14 @@ import { useAuth } from '../../context/AuthContext';
 import { useSubscriptionPermissions } from '../../hooks/useSubscriptionPermissions';
 import firestore from '../../firebaseClient';
 import { collection, query, where, getDocs } from 'firebase/firestore';
-// Importa la funzione centralizzata dal file utils
+import LoadingDots from '../Dashboard/components/LoadingDots';
 import { calculateSystemHealthScore } from '../../utils/calculateSystemHealthScore';
 
 interface SystemData {
   name: string;
   hostid: string;
   pool: string;
-  unit_id: string;    // NUOVO CAMPO per collegare hostid e pool insieme
+  unit_id: string; // Campo per collegare hostid e pool insieme
   type: string;
   used: number;
   avail: number;
@@ -30,13 +30,19 @@ interface SystemData {
   perc_used: number;
   perc_snap: number;
   sending_telemetry: boolean;
-  telemetryDelay: number; // in minutes
+  telemetryDelay: number; // in minuti
   first_date: string;
   last_date: string;
   MUP: number;
   avg_speed: number;
   avg_time: number; // già in minuti
   company: string;
+}
+
+// Interface per i sistemi aggregati: l'aggregazione per pool è fatta soltanto se i record appartengono allo stesso unit_id
+interface AggregatedSystem extends SystemData {
+  pools: string[];
+  count: number;
 }
 
 interface CompanyStats {
@@ -64,7 +70,7 @@ export default function CompanyDetail() {
   const { companyName } = useParams<{ companyName: string }>();
   const navigate = useNavigate();
   const { user } = useAuth();
-  const [systems, setSystems] = useState<SystemData[]>([]);
+  const [systems, setSystems] = useState<AggregatedSystem[]>([]);
   const [companyStats, setCompanyStats] = useState<CompanyStats | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -75,11 +81,11 @@ export default function CompanyDetail() {
   });
   const [searchTerm, setSearchTerm] = useState('');
 
-  // Hook per "System Status" (blocco centrale in alto)
+  // Hook per "System Status"
   const { canAccess: statusCanAccess, shouldBlur: statusShouldBlur } =
     useSubscriptionPermissions('CompaniesDetail', 'System Status');
 
-  // Hook per "System Health Score" (in alto a destra di ogni system card)
+  // Hook per "System Health Score"
   const { canAccess: scoreCanAccess, shouldBlur: scoreShouldBlur } =
     useSubscriptionPermissions('CompaniesDetail', 'System Health Score');
 
@@ -92,14 +98,14 @@ export default function CompanyDetail() {
         const systemsRef = collection(firestore, 'system_data');
         const q = query(systemsRef, where('company', '==', decodeURIComponent(companyName!)));
         const querySnapshot = await getDocs(q);
-        const systemsParsed: SystemData[] = [];
+        const rawSystems: SystemData[] = [];
         querySnapshot.forEach((doc) => {
           const data = doc.data();
-          systemsParsed.push({
+          rawSystems.push({
             name: data.name || '',
             hostid: data.hostid || '',
             pool: data.pool || '',
-            unit_id: data.unit_id || '', // lettura del nuovo campo
+            unit_id: data.unit_id || '', // Lettura del nuovo campo unit_id
             type: data.type || '',
             used: Number(data.used),
             avail: Number(data.avail),
@@ -117,35 +123,83 @@ export default function CompanyDetail() {
           });
         });
 
-        setSystems(systemsParsed);
+        // Raggruppa per unit_id e poi per pool all’interno dello stesso unit_id.
+        const unitGroups: { [unitId: string]: { [pool: string]: SystemData } } = {};
+        rawSystems.forEach(system => {
+          if (!unitGroups[system.unit_id]) {
+            unitGroups[system.unit_id] = {};
+          }
+          // Raggruppa per pool (all’interno dello stesso unit_id): se già presente, prendi quello con last_date più recente.
+          if (!unitGroups[system.unit_id][system.pool]) {
+            unitGroups[system.unit_id][system.pool] = system;
+          } else if (new Date(system.last_date) > new Date(unitGroups[system.unit_id][system.pool].last_date)) {
+            unitGroups[system.unit_id][system.pool] = system;
+          }
+        });
 
-        // Calcolo statistiche base
-        const totalCapacity = systemsParsed.reduce((sum, s) => sum + s.avail, 0);
-        const usedCapacity = systemsParsed.reduce((sum, s) => sum + s.used, 0);
-        const avgUsage = systemsParsed.reduce((sum, s) => sum + s.perc_used, 0) / systemsParsed.length;
-        const uniquePools = new Set(systemsParsed.map(s => s.pool)).size;
-        const telemetryActive = systemsParsed.filter(s => s.sending_telemetry).length;
+        // Calcola la data di cutoff: 1 mese fa dalla data corrente.
+        const now = new Date();
+        const cutoff = new Date(now);
+        cutoff.setMonth(now.getMonth() - 1);
 
-        // Conteggi healthy/warning/critical
+        // Per ogni unità, filtra i record per pool:
+        // - Se esistono record con last_date ≥ cutoff, li si utilizza.
+        // - Se non ce ne sono, allora si usa comunque l’insieme completo dei record (ossia, la pool con la last_date più recente, anche se "vecchia")
+        const aggregatedSystems: AggregatedSystem[] = [];
+        Object.keys(unitGroups).forEach(unitId => {
+          const poolRecords = Object.values(unitGroups[unitId]);
+          let validPoolRecords = poolRecords.filter(record => new Date(record.last_date) >= cutoff);
+          if (validPoolRecords.length === 0) {
+            // Fallback: usa tutti i record di quella unità
+            validPoolRecords = poolRecords;
+          }
+          const count = validPoolRecords.length;
+          // Se c'è un solo record valido, lo usiamo direttamente; altrimenti, tra i validi, prendiamo quello con la last_date più recente.
+          if (count === 1) {
+            const record = validPoolRecords[0];
+            aggregatedSystems.push({
+              ...record,
+              pools: [record.pool],
+              count
+            });
+          } else {
+            const representativeRecord = validPoolRecords.reduce((prev, curr) =>
+              new Date(prev.last_date) > new Date(curr.last_date) ? prev : curr
+            );
+            aggregatedSystems.push({
+              ...representativeRecord,
+              pools: [representativeRecord.pool],
+              count
+            });
+          }
+        });
+
+        setSystems(aggregatedSystems);
+
+        // Calcola le statistiche della company basandosi sui sistemi aggregati
+        const totalCapacity = aggregatedSystems.reduce((sum, s) => sum + s.avail, 0);
+        const usedCapacity = aggregatedSystems.reduce((sum, s) => sum + s.used, 0);
+        const avgUsage = aggregatedSystems.reduce((sum, s) => sum + s.perc_used, 0) / aggregatedSystems.length;
+        const poolSet = new Set<string>();
+        aggregatedSystems.forEach(s => s.pools.forEach(pool => poolSet.add(pool)));
+        const uniquePools = poolSet.size;
+        const telemetryActive = aggregatedSystems.filter(s => s.sending_telemetry).length;
+
         let healthyCount = 0;
         let warningCount = 0;
         let criticalCount = 0;
-        systemsParsed.forEach(system => {
+        aggregatedSystems.forEach(system => {
           const score = calculateSystemHealthScore(system);
           if (score >= 80) healthyCount++;
           else if (score >= 50) warningCount++;
           else criticalCount++;
         });
-
-        // Calcolo del numero totale di sistemi utilizzando unit_id per identificare univocamente il sistema
-        const totalSystems = new Set(systemsParsed.map(s => s.unit_id)).size;
-
-        // Esempio di "company healthScore" (semplificato)
-        const companyHealthScore = 75; // Puoi personalizzare il calcolo
+        const totalSystems = aggregatedSystems.length;
+        const companyHealthScore = 75; // Esempio semplificato
 
         const computedCompanyStats: CompanyStats = {
           name: decodeURIComponent(companyName!),
-          totalSystems, // usa il numero di unit_id univoci
+          totalSystems,
           healthyCount,
           warningCount,
           criticalCount,
@@ -164,9 +218,9 @@ export default function CompanyDetail() {
           }
         };
 
+        // Verifica delle autorizzazioni in base al ruolo utente
         if (user) {
           if (user.role === 'admin_employee') {
-            // Se visibleCompanies esiste e non contiene 'all', controlla che la company corrente sia inclusa
             if (
               user.visibleCompanies &&
               !user.visibleCompanies.includes('all') &&
@@ -176,7 +230,6 @@ export default function CompanyDetail() {
               return;
             }
           } else if (user.role !== 'admin' && computedCompanyStats.name !== user.company) {
-            // Per i ruoli non amministratori, mostra solo la propria company
             setError('Access denied');
             return;
           }
@@ -195,14 +248,14 @@ export default function CompanyDetail() {
     }
   }, [companyName, user]);
 
-  // Funzione per definire il colore del health score
-  const getHealthScoreColor = (score: number) => {
+  // Helper per definire il colore dello health score
+  const getHealthScoreColor = (score: number): string => {
     if (score >= 80) return 'text-[#22c1d4]';
     if (score >= 50) return 'text-[#eeeeee]';
     return 'text-[#f8485e]';
   };
 
-  // Filtro dei systems
+  // Filtra i sistemi in base ai filtri selezionati
   const filteredSystems = systems.filter(system => {
     if (filters.type !== 'all' && !system.type.includes(filters.type)) return false;
     if (filters.status !== 'all') {
@@ -221,7 +274,7 @@ export default function CompanyDetail() {
   if (isLoading) {
     return (
       <div className="flex items-center justify-center h-[60vh]">
-        <div className="text-[#22c1d4] text-xl">Loading systems data...</div>
+        <LoadingDots/>
       </div>
     );
   }
@@ -278,12 +331,11 @@ export default function CompanyDetail() {
         </div>
       </div>
 
-      {/* Blocco “System Status” in alto */}
+      {/* Blocco "System Status" in alto */}
       {(() => {
         if (!statusCanAccess && !statusShouldBlur) return null;
         return (
           <div className="relative bg-[#06272b] rounded-lg p-4 mb-6">
-            {/* Grid con le tre card statistiche */}
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6 mb-6">
               {/* Storage Usage Card */}
               <div className="bg-[#0b3c43] rounded-lg p-6 shadow-lg">
@@ -306,7 +358,7 @@ export default function CompanyDetail() {
                 </div>
                 <div className="flex justify-between mt-1 text-xs text-white">
                   <span>{`${(companyStats.usedCapacity / 1024).toFixed(2)} TB`}</span>
-                  <span>{`${((companyStats.usedCapacity + companyStats.totalCapacity) / 1024).toFixed(2)} TB`}</span>
+                  <span>{`${(((companyStats.usedCapacity + companyStats.totalCapacity) / 1024).toFixed(2))} TB`}</span>
                 </div>
                 <div className="text-sm text-[#eeeeee]/60 mt-2">
                   Systems capacity usage
@@ -315,7 +367,6 @@ export default function CompanyDetail() {
 
               {/* System Status Card */}
               <div className="bg-[#0b3c43] rounded-lg p-6 relative overflow-hidden shadow-lg">
-                {/* Contenuto che verrà blurrato */}
                 <div className={statusShouldBlur ? 'blur-sm pointer-events-none' : ''}>
                   <div className="flex items-center justify-between mb-2">
                     <span className="text-[#eeeeee]/60">System Status</span>
@@ -344,8 +395,6 @@ export default function CompanyDetail() {
                     )}
                   </div>
                 </div>
-
-                {/* Overlay con testo che resta visibile */}
                 {statusShouldBlur && (
                   <div className="absolute inset-0 z-20 flex flex-col items-center justify-center text-center px-4 overflow-hidden">
                     <Lock className="w-6 h-6 text-white mb-2" />
@@ -389,18 +438,12 @@ export default function CompanyDetail() {
                     <span className="text-sm text-[#eeeeee]/60">{system.type}</span>
                   </div>
                 </div>
-
-                {/* Health Score in alto a destra */}
                 {(() => {
                   if (!scoreCanAccess && !scoreShouldBlur) return null;
                   return (
                     <div className="relative">
                       <div
-                        className={`
-                          ${scoreShouldBlur ? 'blur-sm pointer-events-none' : ''} 
-                          text-lg font-bold 
-                          ${getHealthScoreColor(score)}
-                        `}
+                        className={`${scoreShouldBlur ? 'blur-sm pointer-events-none' : ''} text-lg font-bold ${getHealthScoreColor(score)}`}
                       >
                         {scoreShouldBlur ? 'N/A' : score}
                       </div>
@@ -415,11 +458,10 @@ export default function CompanyDetail() {
               </div>
 
               <div className="space-y-4">
-                {/* Capacity Usage con overlay used/avail */}
                 <div>
                   <div className="flex justify-between text-sm mb-1">
                     <span>Capacity Usage</span>
-                    <span className={ system.perc_used > 70 ? 'text-[#f8485e]' : 'text-[#22c1d4]' }>
+                    <span className={system.perc_used > 70 ? 'text-[#f8485e]' : 'text-[#22c1d4]'}>
                       {system.perc_used.toFixed(2)}%
                     </span>
                   </div>
@@ -431,11 +473,10 @@ export default function CompanyDetail() {
                   </div>
                   <div className="flex justify-between mt-1 text-xs text-white">
                     <span>{`${(system.used / 1024).toFixed(2)} TB`}</span>
-                    <span>{`${((system.avail + system.used) / 1024).toFixed(2)} TB`}</span>
+                    <span>{`${(((system.avail + system.used) / 1024).toFixed(2))} TB`}</span>
                   </div>
                 </div>
 
-                {/* Griglia con Snapshots, Telemetry e Performance */}
                 <div className="grid grid-cols-3 gap-4">
                   <div className="text-center">
                     <div className="text-sm text-[#eeeeee]/60">Snapshots</div>
@@ -458,12 +499,11 @@ export default function CompanyDetail() {
                   <div className="text-center">
                     <div className="text-sm text-[#eeeeee]/60">Performance</div>
                     <div className={`font-semibold ${performanceColor}`}>
-                      {system.avg_time} min
+                      {system.avg_speed} min
                     </div>
                   </div>
                 </div>
 
-                {/* Visualizzazione della Last Date */}
                 <div className="text-right text-xs text-[#eeeeee]/60 mt-2">
                   Last update: {system.last_date}
                 </div>
@@ -483,7 +523,7 @@ export default function CompanyDetail() {
   );
 }
 
-// Helper per definire il colore del health score
+// Helper per definire il colore dello health score
 function getHealthScoreColor(score: number): string {
   if (score >= 80) return 'text-[#22c1d4]';
   if (score >= 50) return 'text-[#eeeeee]';

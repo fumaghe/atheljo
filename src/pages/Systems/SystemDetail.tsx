@@ -1,12 +1,14 @@
+// src/pages/Systems/SystemDetail.tsx
+import 'chart.js/auto';
+import 'chartjs-adapter-date-fns';
 import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Line } from 'react-chartjs-2';
-import { format, subDays } from 'date-fns';
+import { subDays } from 'date-fns';
 import { ChartOptions } from 'chart.js';
 import {
   ArrowLeft,
   Activity,
-  Download,
   Database,
   Zap,
   Signal,
@@ -16,19 +18,23 @@ import {
   TrendingUp,
   Building2,
   Wrench,
-  Lock
+  Lock,
+  Server
 } from 'lucide-react';
-import { useSubscriptionPermissions } from '../../hooks/useSubscriptionPermissions';
 import firestore from '../../firebaseClient';
 import { collection, query, where, getDocs } from 'firebase/firestore';
-import { calculateSystemHealthScore } from '../../utils/calculateSystemHealthScore';
+import { useSubscriptionPermissions } from '../../hooks/useSubscriptionPermissions';
 import { useAuth } from '../../context/AuthContext';
 import StateVectorChart from './StateVectorChart';
+import LoadingDots from '../Dashboard/components/LoadingDots';
+import { calculateSystemHealthScore } from '../../utils/calculateSystemHealthScore';
 
+// =============== INTERFACCE ===============
 interface SystemData {
   name: string;
   hostid: string;
   pool: string;
+  unit_id: string;
   type: string;
   used: number;
   avail: number;
@@ -36,16 +42,40 @@ interface SystemData {
   perc_used: number;
   perc_snap: number;
   sending_telemetry: boolean;
-  first_date: string;
-  last_date: string;
+  first_date: string;  // "2018-03-28 19:23:30"
+  last_date: string;   // "2023-03-05 12:31:21"
   MUP: number;
   avg_speed: number;
   avg_time: number;
   company: string;
 }
 
+interface TelemetryData {
+  date: string;        // es. "2018-03-28 19:23:30"
+  unit_id: string;
+  pool: string;
+  used: number;
+  total_space: number;
+  perc_used: number;
+  snap: number;
+  perc_snap: number;
+  // se hai un campo "hostid" anche in capacity_trends, aggiungilo qui
+  hostid?: string; 
+}
+
+interface ForecastPoint {
+  date: string;
+  unit_id: string;
+  pool: string;
+  forecasted_usage: number;
+  forecasted_percentage: number;
+  // se hai un campo "hostid" anche in usage_forecast, aggiungilo qui
+  hostid?: string;
+}
+
 interface ForecastData {
-  hostid: string;
+  unitId: string;
+  pool: string;
   time_to_80: number;
   time_to_90: number;
   time_to_100: number;
@@ -60,405 +90,523 @@ interface HealthMetric {
   unit?: string;
   status: 'good' | 'warning' | 'critical';
   message: string;
-  icon: React.ElementType;
   impact: string;
   weight: number;
+  icon?: React.ElementType;
 }
 
-interface TelemetryData {
-  date: string; // ISO string
-  hostid: string;
-  used: number;
-  total_space: number;
-  perc_used: number;
-  snap: number;
-  perc_snap: number;
-  pool: string;
+// =============== CACHE LOCALE ===============
+interface UnitCache {
+  allSystemRecords: SystemData[];   // Tutti i record system_data
+  allTelemetry: TelemetryData[];     // Tutta la telemetria (capacity_trends)
+  allForecast: ForecastPoint[];      // Tutte le previsioni (usage_forecast)
+  timestamp: number;
 }
 
-interface ForecastPoint {
-  date: string; // ISO string
-  hostid: string;
-  forecasted_usage: number;
-  forecasted_percentage: number;
-}
+const unitCache: Record<string, UnitCache> = {};
+const CACHE_DURATION = 20 * 60 * 1000; // 20 minuti
 
-// --- Caching globale per SystemDetail (20 minuti) ---
-interface CachedSystemDetail {
-  hostId: string;
-  systemData: SystemData;
-  telemetryData: TelemetryData[];
-  forecastPoints: ForecastPoint[];
-  forecastData: ForecastData;
-  healthScore: { score: number; metrics: HealthMetric[] };
-}
-let cachedSystemDetail: CachedSystemDetail | null = null;
-let systemDetailCacheTimestamp: number | null = null;
-const SYSTEM_DETAIL_CACHE_DURATION = 20 * 60 * 1000;
-
+// =============== COMPONENTE PRINCIPALE ===============
 function SystemDetail() {
-  const { hostId } = useParams<{ hostId: string }>();
+  const { unitId } = useParams<{ unitId: string }>();
   const navigate = useNavigate();
   const { user } = useAuth();
 
-  // Permessi di accesso per vari componenti (i valori di "canAccess" e "shouldBlur" sono ottenuti
-  // in base al tipo di abbonamento dell'utente, senza forzare alcun blur in base al ruolo)
+  // Permessi e blur
   const { canAccess: capCan, shouldBlur: capBlur } = useSubscriptionPermissions('SystemDetail', 'Health - Capacity');
   const { canAccess: perfCan, shouldBlur: perfBlur } = useSubscriptionPermissions('SystemDetail', 'Health - Performance');
   const { canAccess: telemCan, shouldBlur: telemBlur } = useSubscriptionPermissions('SystemDetail', 'Health - Telemetry');
   const { canAccess: snapCan, shouldBlur: snapBlur } = useSubscriptionPermissions('SystemDetail', 'Health - Snapshots');
   const { canAccess: mupCan, shouldBlur: mupBlur } = useSubscriptionPermissions('SystemDetail', 'Health - MUP');
-  const { canAccess: utilCan, shouldBlur: utilBlur } = useSubscriptionPermissions('SystemDetail', 'Health - Utilization');
-  const { canAccess: healthHeadCan, shouldBlur: healthHeadBlur } = useSubscriptionPermissions('SystemDetail', 'HealthScoreInHeader');
-  const { canAccess: t80Can, shouldBlur: t80Blur } = useSubscriptionPermissions('SystemDetail', 'Forecast - TimeTo80');
-  const { canAccess: t90Can, shouldBlur: t90Blur } = useSubscriptionPermissions('SystemDetail', 'Forecast - TimeTo90');
-  const { canAccess: t100Can, shouldBlur: t100Blur } = useSubscriptionPermissions('SystemDetail', 'Forecast - TimeTo100');
-  const { canAccess: chartHistCan, shouldBlur: chartHistBlur } = useSubscriptionPermissions('SystemDetail', 'Chart - UsageHistory');
-  const { canAccess: chartForeCan, shouldBlur: chartForeBlur } = useSubscriptionPermissions('SystemDetail', 'Chart - UsageForecast');
+  const { canAccess: utilCan, shouldBlur: utilBlur } =
+    useSubscriptionPermissions('SystemDetail', 'Health - Utilization');
+  const { canAccess: healthHeadCan, shouldBlur: healthHeadBlur } =
+    useSubscriptionPermissions('SystemDetail', 'HealthScoreInHeader');
+  const { canAccess: t80Can, shouldBlur: t80Blur } =
+    useSubscriptionPermissions('SystemDetail', 'Forecast - TimeTo80');
+  const { canAccess: t90Can, shouldBlur: t90Blur } =
+    useSubscriptionPermissions('SystemDetail', 'Forecast - TimeTo90');
+  const { canAccess: t100Can, shouldBlur: t100Blur } =
+    useSubscriptionPermissions('SystemDetail', 'Forecast - TimeTo100');
+  const { canAccess: chartHistCan, shouldBlur: chartHistBlur } =
+    useSubscriptionPermissions('SystemDetail', 'Chart - UsageHistory');
+  const { canAccess: chartForeCan, shouldBlur: chartForeBlur } =
+    useSubscriptionPermissions('SystemDetail', 'Chart - UsageForecast');
 
+  // Stato globale: tutti i record, la pool, l'hostid selezionato, e i dati da mostrare
+  const [allRecords, setAllRecords] = useState<SystemData[]>([]);
+  const [poolList, setPoolList] = useState<string[]>([]);
+  const [selectedPool, setSelectedPool] = useState<string | null>(null);
+
+  // Hostid che stiamo usando per calcolare i dati
+  const [selectedHostid, setSelectedHostid] = useState<string | null>(null);
+
+  // Dati finali del "sistema" selezionato (pool + hostid)
   const [systemData, setSystemData] = useState<SystemData | null>(null);
+  
+  // NOTA: useremo "stitchedTelemetry" per i dati finali da mostrare nel grafico Usage History
+  const [stitchedTelemetry, setStitchedTelemetry] = useState<TelemetryData[]>([]);
+  
+  // Forecast “finale” (per ora non stichiamo sugli intervalli, ma puoi farlo se vuoi)
+  const [forecastPoints, setForecastPoints] = useState<ForecastPoint[]>([]);
   const [forecastData, setForecastData] = useState<ForecastData | null>(null);
   const [healthScore, setHealthScore] = useState<{ score: number; metrics: HealthMetric[] } | null>(null);
+
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [telemetryData, setTelemetryData] = useState<TelemetryData[]>([]);
-  const [forecastPoints, setForecastPoints] = useState<ForecastPoint[]>([]);
   const [timeRange, setTimeRange] = useState('1y');
 
-  // Funzione per filtrare i dati in base a un intervallo di tempo
-  function getTimeRangeData<T extends { date: string }>(data: T[], range: string): T[] {
-    const now = new Date();
-    const rangeMap: Record<string, number> = {
-      '1m': 30,
-      '3m': 90,
-      '6m': 180,
-      '1y': 365,
-      'all': 9999
-    };
-    const days = rangeMap[range] || 180;
-    const cutoff = subDays(now, days);
-    return data.filter(point => new Date(point.date) >= cutoff);
-  }
-
+  // =============== 1) Caricamento dati e caching ===============
   useEffect(() => {
-    const loadData = async () => {
+    if (!unitId) return;
+    setIsLoading(true);
+    setError(null);
+
+    (async () => {
       try {
-        setIsLoading(true);
-        setError(null);
         const now = Date.now();
+        const cached = unitCache[unitId];
+        if (cached && now - cached.timestamp < CACHE_DURATION) {
+          // Se i dati in cache sono ancora validi, li usiamo
+          setAllRecords(cached.allSystemRecords);
 
-        // Usa la cache se valida
-        if (
-          cachedSystemDetail &&
-          systemDetailCacheTimestamp &&
-          now - systemDetailCacheTimestamp < SYSTEM_DETAIL_CACHE_DURATION &&
-          cachedSystemDetail.hostId === hostId
-        ) {
-          setSystemData(cachedSystemDetail.systemData);
-          setTelemetryData(cachedSystemDetail.telemetryData);
-          setForecastPoints(cachedSystemDetail.forecastPoints);
-          setForecastData(cachedSystemDetail.forecastData);
-          setHealthScore(cachedSystemDetail.healthScore);
+          // Ricavo la lista delle pool
+          const uniquePools = Array.from(new Set(cached.allSystemRecords.map((r) => r.pool)));
+          setPoolList(uniquePools);
+
+          // Trovo la pool di default con last_date più recente
+          let defaultPool: string | null = null;
+          let maxTime = 0;
+          for (const rec of cached.allSystemRecords) {
+            const t = new Date(rec.last_date).getTime();
+            if (t > maxTime) {
+              maxTime = t;
+              defaultPool = rec.pool;
+            }
+          }
+          setSelectedPool(defaultPool);
+
+          setIsLoading(false);
           return;
         }
 
-        // Carica SystemData
-        const systemQuery = query(
-          collection(firestore, 'system_data'),
-          where('hostid', '==', hostId)
-        );
-        const systemSnapshot = await getDocs(systemQuery);
-        if (systemSnapshot.empty) {
-          setError('System not found');
+        // Altrimenti fetch da Firestore per system_data
+        const systemRef = collection(firestore, 'system_data');
+        const systemQuery = query(systemRef, where('unit_id', '==', unitId));
+        const snapshot = await getDocs(systemQuery);
+
+        if (snapshot.empty) {
+          setError(`No system records found for unit_id=${unitId}`);
+          setIsLoading(false);
           return;
         }
-        const systemDoc = systemSnapshot.docs[0];
-        const sData = systemDoc.data();
-        const system: SystemData = {
-          name: sData.name || '',
-          hostid: sData.hostid || '',
-          pool: sData.pool || '',
-          type: sData.type || '',
-          used: Number(sData.used),
-          avail: Number(sData.avail),
-          used_snap: Number(sData.used_snap),
-          perc_used: Number(sData.perc_used),
-          perc_snap: Number(sData.perc_snap),
-          sending_telemetry: String(sData.sending_telemetry).toLowerCase() === 'true',
-          first_date: sData.first_date || '',
-          last_date: sData.last_date || '',
-          MUP: Number(sData.MUP),
-          avg_speed: Number(sData.avg_speed),
-          avg_time: Number(sData.avg_time),
-          company: sData.company || ''
-        };
-        setSystemData(system);
 
-        // Filtro per company
-        if (user) {
+        const loadedRecords: SystemData[] = [];
+        snapshot.forEach((doc) => {
+          const d = doc.data();
+          const firstDate = d.first_date ? d.first_date.replace(' ', 'T') : '';
+          const lastDate = d.last_date ? d.last_date.replace(' ', 'T') : '';
+          loadedRecords.push({
+            name: d.name || '',
+            hostid: d.hostid || '',
+            pool: d.pool || '',
+            unit_id: d.unit_id || '',
+            type: d.type || '',
+            used: Number(d.used),
+            avail: Number(d.avail),
+            used_snap: Number(d.used_snap),
+            perc_used: Number(d.perc_used),
+            perc_snap: Number(d.perc_snap),
+            sending_telemetry: String(d.sending_telemetry).toLowerCase() === 'true',
+            first_date: firstDate,
+            last_date: lastDate,
+            MUP: d.MUP == null ? 55 : Number(d.MUP),
+            avg_speed: Number(d.avg_speed),
+            avg_time: Number(d.avg_time),
+            company: d.company || ''
+          });
+        });
+
+        if (!loadedRecords.length) {
+          setError('No valid system records found');
+          setIsLoading(false);
+          return;
+        }
+
+        // Controllo permessi su company
+        if (user && loadedRecords.length > 0) {
+          const rec0 = loadedRecords[0];
           if (user.role === 'admin_employee') {
             if (
               user.visibleCompanies &&
               !user.visibleCompanies.includes('all') &&
-              !user.visibleCompanies.includes(system.company)
+              !user.visibleCompanies.includes(rec0.company)
             ) {
-              setError('Access denied');
+              setError('Access denied: company mismatch');
+              setIsLoading(false);
               return;
             }
-          } else if (user.role !== 'admin' && system.company !== user.company) {
-            setError('Access denied');
+          } else if (user.role !== 'admin' && rec0.company !== user.company) {
+            setError('Access denied: not your company');
+            setIsLoading(false);
             return;
           }
         }
 
-        // Carica Telemetry da "capacity_trends"
-        const telemetryQuery = query(
+        // Scelgo un record col last_date più recente (per avere un riferimento iniziale)
+        let latestRecord = loadedRecords[0];
+        let maxTime = 0;
+        for (const r of loadedRecords) {
+          const t = new Date(r.last_date).getTime();
+          if (t > maxTime) {
+            maxTime = t;
+            latestRecord = r;
+          }
+        }
+        const refHostid = latestRecord.hostid || '';
+
+        // Estrai i valori unici di hostid dalla system_data (utili per filtrare i dati nelle altre collezioni)
+        const uniqueHostids = Array.from(new Set(loadedRecords.map(r => r.hostid)));
+
+        // Carico TUTTA la telemetria dalla collezione capacity_trends usando l'operatore "in" sui hostid
+        const telemQ = query(
           collection(firestore, 'capacity_trends'),
-          where('hostid', '==', hostId)
+          where('hostid', 'in', uniqueHostids)
         );
-        const telemetrySnapshot = await getDocs(telemetryQuery);
-        let systemTelemetry: TelemetryData[] = [];
-        telemetrySnapshot.forEach((doc) => {
-          const data = doc.data();
-          systemTelemetry.push({
-            hostid: data.hostid || '',
-            pool: data.pool || '',
-            used: Number(data.used),
-            total_space: Number(data.total_space),
-            perc_used: Number(data.perc_used),
-            snap: Number(data.snap),
-            perc_snap: Number(data.perc_snap),
-            date: data.date && data.date.toDate ? data.date.toDate().toISOString() : data.date || ''
+        const telemSnap = await getDocs(telemQ);
+        let allTelemetryData: TelemetryData[] = [];
+        telemSnap.forEach((doc) => {
+          const td = doc.data();
+          allTelemetryData.push({
+            date: td.date ? td.date.replace(' ', 'T') : '',
+            unit_id: td.unit_id || '',
+            pool: td.pool || '',
+            used: Number(td.used),
+            total_space: Number(td.total_space),
+            perc_used: Number(td.perc_used),
+            snap: Number(td.snap),
+            perc_snap: Number(td.perc_snap),
+            hostid: td.hostid || ''
           });
         });
-        // (Opzionale) Filtra valori anomali e ordina per data
-        systemTelemetry = systemTelemetry
-          .filter(t => t.perc_used >= 0 && t.perc_used <= 100)
+        allTelemetryData = allTelemetryData
+          .filter((t) => t.perc_used >= 0 && t.perc_used <= 100)
           .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
-        setTelemetryData(systemTelemetry);
 
-        // Carica ForecastPoints da "usage_forecast"
-        const forecastQuery = query(
+        // Carico TUTTO il forecast dalla collezione usage_forecast usando l'operatore "in" sui hostid
+        const foreQ = query(
           collection(firestore, 'usage_forecast'),
-          where('hostid', '==', hostId)
+          where('hostid', 'in', uniqueHostids)
         );
-        const forecastSnapshot = await getDocs(forecastQuery);
-        let forecastPointsData: ForecastPoint[] = [];
-        forecastSnapshot.forEach((doc) => {
-          const data = doc.data();
-          forecastPointsData.push({
-            hostid: data.hostid || '',
-            forecasted_usage: Number(data.forecasted_usage),
-            forecasted_percentage: Number(data.forecasted_percentage),
-            date: data.date && data.date.toDate ? data.date.toDate().toISOString() : data.date || ''
+        const foreSnap = await getDocs(foreQ);
+        let allForecastData: ForecastPoint[] = [];
+        foreSnap.forEach((doc) => {
+          const fd = doc.data();
+          allForecastData.push({
+            date: fd.date ? fd.date.replace(' ', 'T') : '',
+            unit_id: fd.unit_id || '',
+            pool: fd.pool || '',
+            forecasted_usage: Number(fd.forecasted_usage),
+            forecasted_percentage: Number(fd.forecasted_percentage),
+            hostid: fd.hostid || ''
           });
         });
-        // Ordina per data
-        forecastPointsData.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
-        setForecastPoints(forecastPointsData);
+        allForecastData.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
 
-        // Calcola Forecast
-        const forecast: ForecastData = {
-          hostid: hostId!,
-          time_to_80: calculateDaysToThreshold(forecastPointsData, 80),
-          time_to_90: calculateDaysToThreshold(forecastPointsData, 90),
-          time_to_100: calculateDaysToThreshold(forecastPointsData, 100),
-          current_usage: system.perc_used,
-          growth_rate: calculateGrowthRate(forecastPointsData)
+        // Metto tutto in cache
+        unitCache[unitId] = {
+          allSystemRecords: loadedRecords,
+          allTelemetry: allTelemetryData,
+          allForecast: allForecastData,
+          timestamp: now
         };
-        setForecastData(forecast);
 
-        // Calcola Health Score
-        const { finalScore, metrics } = computeHealthScore(system);
-        setHealthScore({
-          score: finalScore,
-          metrics
-        });
+        setAllRecords(loadedRecords);
 
-        // Aggiorna la cache
-        cachedSystemDetail = {
-          hostId: hostId!,
-          systemData: system,
-          telemetryData: systemTelemetry,
-          forecastPoints: forecastPointsData,
-          forecastData: forecast,
-          healthScore: { score: finalScore, metrics }
-        };
-        systemDetailCacheTimestamp = now;
+        // Costruisco la lista delle pool
+        const allPools = Array.from(new Set(loadedRecords.map((r) => r.pool)));
+        setPoolList(allPools);
+
+        // Definisco la pool di default con l'ultimo last_date
+        let defaultPool: string | null = null;
+        let maxT2 = 0;
+        for (const rec of loadedRecords) {
+          const t = new Date(rec.last_date).getTime();
+          if (t > maxT2) {
+            maxT2 = t;
+            defaultPool = rec.pool;
+          }
+        }
+        setSelectedPool(defaultPool);
+
       } catch (err) {
-        console.error('Error loading system data:', err);
+        console.error(err);
         setError('Failed to load system data');
       } finally {
         setIsLoading(false);
       }
+    })();
+  }, [unitId, user]);
+
+  // =============== 2) Al cambio pool, scelgo l'hostid più recente di quella pool ===============
+  useEffect(() => {
+    if (!selectedPool || !allRecords.length) {
+      setSelectedHostid(null);
+      return;
+    }
+    const poolRecords = allRecords.filter((r) => r.pool === selectedPool);
+    if (!poolRecords.length) {
+      setSelectedHostid(null);
+      return;
+    }
+    poolRecords.sort((a, b) => new Date(b.last_date).getTime() - new Date(a.last_date).getTime());
+    if (!selectedHostid) {
+      setSelectedHostid(poolRecords[0].hostid);
+    }
+  }, [selectedPool, allRecords, selectedHostid]);
+
+  // =============== 3) Stitching di usage history e set systemData/forecast ===============
+  useEffect(() => {
+    if (!selectedPool || !selectedHostid || !allRecords.length || !unitId) {
+      setSystemData(null);
+      setStitchedTelemetry([]); 
+      setForecastPoints([]);
+      setForecastData(null);
+      setHealthScore(null);
+      return;
+    }
+
+    const cached = unitCache[unitId];
+    if (!cached) return;
+
+    // 3.1) Trovo TUTTI i record system_data che matchano pool + hostid
+    const relevantRecords = allRecords.filter(
+      (r) => r.pool === selectedPool && r.hostid === selectedHostid
+    );
+    if (!relevantRecords.length) {
+      setSystemData(null);
+      setStitchedTelemetry([]);
+      return;
+    }
+    // Ordino e prendo il record con il last_date più recente come "currentSystem"
+    relevantRecords.sort((a, b) => new Date(b.last_date).getTime() - new Date(a.last_date).getTime());
+    const currentSystem = relevantRecords[0];
+    setSystemData(currentSystem);
+
+    // 3.2) Costruisco un array “stitched” con i dati telemetrici per ciascun record (intervallo [first_date, last_date])
+    let finalTelemetry: TelemetryData[] = [];
+    for (const rec of relevantRecords) {
+      const from = new Date(rec.first_date).getTime();
+      const to = new Date(rec.last_date).getTime();
+
+      // Filtra i dati telemetrici in cache:
+      // - pool deve corrispondere
+      // - hostid deve corrispondere
+      // - la data deve trovarsi nell'intervallo [first_date, last_date]
+      const sub = cached.allTelemetry.filter((t) => {
+        if (t.pool !== rec.pool) return false;
+        if (t.hostid !== rec.hostid) return false;
+        const tDate = new Date(t.date).getTime();
+        return tDate >= from && tDate <= to;
+      });
+      finalTelemetry.push(...sub);
+    }
+    finalTelemetry.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+
+    setStitchedTelemetry(finalTelemetry);
+
+    // 3.3) Forecast: filtra i record in base a pool e hostid
+    const foreForHost = cached.allForecast.filter(
+      (f) => f.pool === selectedPool && f.hostid === selectedHostid
+    );
+    foreForHost.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+    setForecastPoints(foreForHost);
+
+    // 3.4) Costruisco forecastData
+    const fc: ForecastData = {
+      unitId: currentSystem.unit_id,
+      pool: currentSystem.pool,
+      time_to_80: calculateDaysToThreshold(foreForHost, 80),
+      time_to_90: calculateDaysToThreshold(foreForHost, 90),
+      time_to_100: calculateDaysToThreshold(foreForHost, 100),
+      current_usage: currentSystem.perc_used,
+      growth_rate: calculateGrowthRate(foreForHost)
     };
+    setForecastData(fc);
 
-    if (hostId) loadData();
-  }, [hostId, user]);
-
-  // --- Helper: Calcolo giorni a soglia ---
-  function calculateDaysToThreshold(forecastPoints: ForecastPoint[], threshold: number) {
-    if (!forecastPoints.length) return -1;
-    const today = new Date();
-    const point = forecastPoints.find(p => Number(p.forecasted_percentage) >= threshold);
-    if (!point) return -1;
-    const thresholdDate = new Date(point.date);
-    const diffTime = thresholdDate.getTime() - today.getTime();
-    return diffTime > 0 ? Math.ceil(diffTime / (1000 * 60 * 60 * 24)) : -1;
-  }
-
-  // --- Helper: Calcolo growth rate ---
-  function calculateGrowthRate(forecastPoints: ForecastPoint[]): number {
-    if (forecastPoints.length < 2) return 0;
-    const first = forecastPoints[0];
-    const last = forecastPoints[forecastPoints.length - 1];
-    const daysDiff = (new Date(last.date).getTime() - new Date(first.date).getTime()) / (1000 * 60 * 60 * 24);
-    const percentageDiff = Number(last.forecasted_percentage) - Number(first.forecasted_percentage);
-    return Number((percentageDiff / daysDiff).toFixed(2));
-  }
-
-  // --- Helper: Calcolo Health Score con breakdown ---
-  function computeHealthScore(system: SystemData) {
-    const finalScore = calculateSystemHealthScore(system);
-    const percUsed = system.perc_used;
-    const avgTime = system.avg_time;
-    const usedSnap = system.used_snap;
-    const percSnap = system.perc_snap;
-    const MUP = system.MUP;
-
-    const capacityScore = percUsed <= 55 ? 100 : Math.max(0, 100 - ((percUsed - 55) * (100 / 45)));
-    const performanceScore = Math.max(0, 100 - 10 * Math.abs(avgTime - 5));
-    const telemetryScore = system.sending_telemetry ? 100 : 0;
-    const snapshotsScore = usedSnap > 0 ? Math.max(0, Math.min(100, 100 - percSnap)) : 0;
-    const mupScore = MUP <= 55 ? 100 : Math.max(0, 100 - ((MUP - 55) * (100 / 45)));
-
-    const weightCapacity = 0.40;
-    const weightPerformance = 0.20;
-    const weightTelemetry = 0.15;
-    const weightSnapshots = 0.10;
-    const weightMUP = 0.15;
-
-    const capacityImpact = weightCapacity * (capacityScore - 50);
-    const performanceImpact = weightPerformance * (performanceScore - 50);
-    const telemetryImpact = weightTelemetry * (telemetryScore - 50);
-    const snapshotsImpact = weightSnapshots * (snapshotsScore - 50);
-    const mupImpact = weightMUP * (mupScore - 50);
+    // 3.5) Calcolo Health Score dal currentSystem
+    const finalScore = calculateSystemHealthScore(currentSystem);
+    const capacityScore =
+      currentSystem.perc_used <= 55
+        ? 100
+        : Math.max(0, 100 - (currentSystem.perc_used - 55) * (100 / 45));
+    const performanceScore = Math.max(0, 100 - 10 * Math.abs(currentSystem.avg_time - 5));
+    const telemetryScore = currentSystem.sending_telemetry ? 100 : 0;
+    const snapshotsScore =
+      currentSystem.used_snap > 0
+        ? Math.max(0, Math.min(100, 100 - currentSystem.perc_snap))
+        : 0;
+    const mupScore =
+      currentSystem.MUP <= 55
+        ? 100
+        : Math.max(0, 100 - (currentSystem.MUP - 55) * (100 / 45));
     const utilizationScore = (capacityScore + snapshotsScore) / 2;
-    const utilizationImpact = utilizationScore - 50;
 
     const metrics: HealthMetric[] = [
       {
         name: 'Capacity',
         value: Number(capacityScore.toFixed(1)),
-        rawValue: Number((100 - percUsed).toFixed(1)),
+        rawValue: Number((100 - currentSystem.perc_used).toFixed(1)),
         unit: '%',
         status: capacityScore < 50 ? 'critical' : capacityScore < 70 ? 'warning' : 'good',
-        message: `${(system.used / 1024).toFixed(1)} TB used of ${((system.used + system.avail) / 1024).toFixed(1)} TB total`,
-        icon: Database,
-        impact: `${capacityImpact >= 0 ? '+' : ''}${capacityImpact.toFixed(1)} points`,
-        weight: weightCapacity * 100
+        message: `${(currentSystem.used / 1024).toFixed(2)} TB used of ${(((currentSystem.used + currentSystem.avail) / 1024).toFixed(2))} TB total`,
+        impact: 'N/A',
+        weight: 40,
+        icon: Database
       },
       {
         name: 'Performance',
         value: Number(performanceScore.toFixed(1)),
+        rawValue: Number(performanceScore.toFixed(1)),
         unit: '',
         status: performanceScore < 50 ? 'critical' : performanceScore < 60 ? 'warning' : 'good',
-        message: `Telemetry every ${avgTime.toFixed(1)} minutes`,
-        icon: Zap,
-        impact: `${performanceImpact >= 0 ? '+' : ''}${performanceImpact.toFixed(1)} points`,
-        weight: weightPerformance * 100
+        message: `Avg time: ${currentSystem.avg_time.toFixed(1)} min`,
+        impact: 'N/A',
+        weight: 20,
+        icon: Zap
       },
       {
         name: 'Telemetry',
         value: telemetryScore,
-        rawValue: system.sending_telemetry ? 'Active' : 'Inactive',
+        rawValue: currentSystem.sending_telemetry ? 'Active' : 'Inactive',
         unit: '',
         status: telemetryScore === 100 ? 'good' : 'critical',
-        message: system.sending_telemetry
-          ? 'System is actively sending telemetry data'
-          : 'System is not sending telemetry data',
-        icon: Signal,
-        impact: `${telemetryImpact >= 0 ? '+' : ''}${telemetryImpact.toFixed(1)} points`,
-        weight: weightTelemetry * 100
+        message: currentSystem.sending_telemetry ? 'System is sending telemetry' : 'No telemetry',
+        impact: 'N/A',
+        weight: 15,
+        icon: Signal
       },
       {
         name: 'Snapshots',
         value: Number(snapshotsScore.toFixed(1)),
-        rawValue: usedSnap,
-        unit: '%',
+        rawValue: currentSystem.used_snap,
+        unit: 'GB',
         status: snapshotsScore < 50 ? 'critical' : snapshotsScore < 70 ? 'warning' : 'good',
-        message: usedSnap > 0 ? `${usedSnap} GB used for snapshots` : 'No snapshots found',
-        icon: Camera,
-        impact: `${snapshotsImpact >= 0 ? '+' : ''}${snapshotsImpact.toFixed(1)} points`,
-        weight: weightSnapshots * 100
+        message:
+          currentSystem.used_snap > 0
+            ? `${currentSystem.used_snap} GB used for snapshots`
+            : 'No snapshots found',
+        impact: 'N/A',
+        weight: 10,
+        icon: Camera
       },
       {
-        name: 'Max Usage',
+        name: 'MUP',
         value: Number(mupScore.toFixed(1)),
-        rawValue: MUP,
-        unit: ' TB',
+        rawValue: currentSystem.MUP,
+        unit: '',
         status: mupScore < 50 ? 'critical' : mupScore < 60 ? 'warning' : 'good',
-        message: 'Resource efficiency based on usage patterns',
-        icon: BarChart,
-        impact: `${mupImpact >= 0 ? '+' : ''}${mupImpact.toFixed(1)} points`,
-        weight: weightMUP * 100
+        message: 'Resource usage patterns',
+        impact: 'N/A',
+        weight: 15,
+        icon: BarChart
       },
       {
         name: 'Utilization',
         value: Number(utilizationScore.toFixed(1)),
         rawValue: utilizationScore.toFixed(1),
         unit: '%',
-        status: utilizationScore < 50 ? 'critical' : utilizationScore < 70 ? 'warning' : 'good',
-        message: 'Avg of Capacity and Snapshots scores',
-        icon: Gauge,
-        impact: `${utilizationImpact >= 0 ? '+' : ''}${utilizationImpact.toFixed(1)} points`,
-        weight: 0
+        status:
+          utilizationScore < 50 ? 'critical' : utilizationScore < 70 ? 'warning' : 'good',
+        message: 'Avg of Capacity & Snapshots Score',
+        impact: 'N/A',
+        weight: 0,
+        icon: Gauge
       }
     ];
+    setHealthScore({ score: finalScore, metrics });
+  }, [selectedPool, selectedHostid, allRecords, unitId]);
 
-    return { finalScore, metrics };
+  // =============== Funzioni di Supporto ===============
+  function calculateDaysToThreshold(forecastPoints: ForecastPoint[], threshold: number) {
+    if (!forecastPoints.length) return -1;
+    const today = new Date();
+    const point = forecastPoints.find((p) => p.forecasted_percentage >= threshold);
+    if (!point) return -1;
+    const thresholdDate = new Date(point.date);
+    const diffTime = thresholdDate.getTime() - today.getTime();
+    return diffTime > 0 ? Math.ceil(diffTime / (1000 * 60 * 60 * 24)) : -1;
   }
 
-  const getStatusColor = (status: string, impact: string) =>
-    impact.startsWith('+') ? 'text-[#22c1d4]' : 'text-[#f8485e]';
+  function calculateGrowthRate(forecastPoints: ForecastPoint[]): number {
+    if (forecastPoints.length < 2) return 0;
+    const first = forecastPoints[0];
+    const last = forecastPoints[forecastPoints.length - 1];
+    const daysDiff =
+      (new Date(last.date).getTime() - new Date(first.date).getTime()) /
+      (1000 * 60 * 60 * 24);
+    const percentageDiff = last.forecasted_percentage - first.forecasted_percentage;
+    return daysDiff > 0 ? Number((percentageDiff / daysDiff).toFixed(2)) : 0;
+  }
 
-  const getStatusBg = (status: string, impact: string) =>
-    impact.startsWith('+') ? 'bg-[#22c1d4]/20' : 'bg-[#f8485e]/20';
+  function getTimeRangeData<T extends { date: string }>(data: T[], range: string): T[] {
+    if (range === 'all') return data;
+    const now = new Date();
+    const rangeMap: Record<string, number> = {
+      '1m': 30,
+      '3m': 90,
+      '6m': 180,
+      '1y': 365
+    };
+    const days = rangeMap[range] || 365;
+    const cutoff = subDays(now, days);
+    return data.filter((point) => new Date(point.date).getTime() >= cutoff.getTime());
+  }
 
-  const getHealthScoreColor = (score: number) => {
-    if (score >= 80) return 'text-[#22c1d4]';
-    if (score >= 50) return 'text-[#eeeeee]';
-    return 'text-[#f8485e]';
-  };
-
+  // =============== RENDER ===============
   if (isLoading) {
     return (
       <div className="flex items-center justify-center h-[60vh]">
-        <div className="text-[#22c1d4] text-xl">Loading system data...</div>
+        <LoadingDots/>
       </div>
     );
   }
 
-  if (error || !systemData || !healthScore) {
+  if (error) {
     return (
       <div className="flex items-center justify-center h-[60vh]">
-        <div className="text-[#f8485e] text-xl">{error || 'System data not found'}</div>
+        <div className="text-[#f8485e] text-xl">{error}</div>
       </div>
     );
   }
 
-  // Filtra i dati in base al timeRange
-  const filteredTelemetry = getTimeRangeData<TelemetryData>(telemetryData, timeRange);
+  // Se mancano systemData o healthScore, mostro un messaggio
+  if (!systemData || !healthScore) {
+    return (
+      <div className="flex items-center justify-center h-[60vh]">
+        <div className="text-[#f8485e] text-xl">
+          No data found for this pool/hostid or missing health score
+        </div>
+      </div>
+    );
+  }
+
+  // Filtro la telemetria e il forecast in base al timeRange
+  const filteredTelemetry = getTimeRangeData<TelemetryData>(stitchedTelemetry, timeRange);
   const filteredForecast = getTimeRangeData<ForecastPoint>(forecastPoints, timeRange);
 
-  // ============ CHART DATA REALI ============
+  // Prendo i record per la pool selezionata (per mostrare la card di hostid)
+  const poolRecords = allRecords.filter((r) => r.pool === selectedPool);
+  poolRecords.sort((a, b) => new Date(b.last_date).getTime() - new Date(a.last_date).getTime());
+
+  // Dati per chart Usage History
   const historyChartData = {
     datasets: [
       {
         label: 'Usage',
-        data: filteredTelemetry.map(point => ({ x: point.date, y: point.perc_used })),
+        data: filteredTelemetry.map((p) => ({ x: p.date, y: p.perc_used })),
         borderColor: '#22c1d4',
-        backgroundColor: 'rgba(34, 193, 212, 0.1)',
+        backgroundColor: 'rgba(34,193,212,0.1)',
         tension: 0.2,
         pointRadius: 0,
         fill: true
@@ -466,20 +614,21 @@ function SystemDetail() {
     ]
   };
 
+  // Dati per chart Usage Forecast
   const forecastChartData = {
     datasets: [
       {
         label: 'Historical',
-        data: filteredTelemetry.map(point => ({ x: point.date, y: point.perc_used })),
+        data: filteredTelemetry.map((p) => ({ x: p.date, y: p.perc_used })),
         borderColor: '#22c1d4',
-        backgroundColor: 'rgba(34, 193, 212, 0.1)',
+        backgroundColor: 'rgba(34,193,212,0.1)',
         tension: 0.2,
         pointRadius: 0,
         fill: true
       },
       {
         label: 'Forecast',
-        data: filteredForecast.map(point => ({ x: point.date, y: point.forecasted_percentage })),
+        data: filteredForecast.map((p) => ({ x: p.date, y: p.forecasted_percentage })),
         borderColor: '#f8485e',
         borderDash: [5, 5],
         tension: 0.2,
@@ -489,8 +638,8 @@ function SystemDetail() {
     ]
   };
 
-  // Dati dummy (stesso formato)
-  const dummyHistoryChartData = {
+  // Dati fittizi se l’utente non ha il permesso (blur)
+  const dummyHistory = {
     datasets: [
       {
         label: 'Usage (Dummy)',
@@ -499,8 +648,8 @@ function SystemDetail() {
           { x: '2023-02-01', y: 40 },
           { x: '2023-03-01', y: 60 }
         ],
-        borderColor: '#888888',
-        backgroundColor: 'rgba(136, 136, 136, 0.1)',
+        borderColor: '#888',
+        backgroundColor: 'rgba(136,136,136,0.1)',
         tension: 0.2,
         pointRadius: 0,
         fill: true
@@ -508,7 +657,7 @@ function SystemDetail() {
     ]
   };
 
-  const dummyForecastChartData = {
+  const dummyForecast = {
     datasets: [
       {
         label: 'Historical (Dummy)',
@@ -517,8 +666,8 @@ function SystemDetail() {
           { x: '2023-02-01', y: 30 },
           { x: '2023-03-01', y: 50 }
         ],
-        borderColor: '#888888',
-        backgroundColor: 'rgba(136, 136, 136, 0.1)',
+        borderColor: '#888',
+        backgroundColor: 'rgba(136,136,136,0.1)',
         tension: 0.2,
         pointRadius: 0,
         fill: true
@@ -526,11 +675,10 @@ function SystemDetail() {
       {
         label: 'Forecast (Dummy)',
         data: [
-          { x: '2023-01-01', y: null },
-          { x: '2023-02-01', y: 60 },
-          { x: '2023-03-01', y: 70 }
+          { x: '2023-04-01', y: 60 },
+          { x: '2023-05-01', y: 70 }
         ],
-        borderColor: '#aaaaaa',
+        borderColor: '#aaa',
         borderDash: [5, 5],
         tension: 0.2,
         pointRadius: 0,
@@ -539,11 +687,10 @@ function SystemDetail() {
     ]
   };
 
-  // Se il grafico è in modalità blur, usa i dummy
-  const displayedHistoryChartData = chartHistBlur ? dummyHistoryChartData : historyChartData;
-  const displayedForecastChartData = chartForeBlur ? dummyForecastChartData : forecastChartData;
+  // Scegli se mostrare dati veri o fittizi
+  const displayedHistory = chartHistBlur ? dummyHistory : historyChartData;
+  const displayedForecast = chartForeBlur ? dummyForecast : forecastChartData;
 
-  // Opzioni del grafico
   const chartOptions: ChartOptions<'line'> = {
     responsive: true,
     maintainAspectRatio: false,
@@ -553,7 +700,7 @@ function SystemDetail() {
         max: 100,
         grid: { color: 'rgba(255,255,255,0.1)' },
         ticks: {
-          color: '#ffffff',
+          color: '#fff',
           callback: (val) => `${(val as number).toFixed(2)}%`
         }
       },
@@ -564,20 +711,20 @@ function SystemDetail() {
           displayFormats: { month: 'MMM yyyy' }
         },
         grid: { color: 'rgba(255,255,255,0.1)' },
-        ticks: { color: '#ffffff' }
+        ticks: { color: '#fff' }
       }
     },
     plugins: {
       legend: {
         position: 'top',
-        labels: { color: '#ffffff', usePointStyle: true, pointStyle: 'circle' }
+        labels: { color: '#fff', usePointStyle: true, pointStyle: 'circle' }
       },
       tooltip: {
         mode: 'index',
         intersect: false,
         backgroundColor: '#0b3c43',
-        titleColor: '#ffffff',
-        bodyColor: '#ffffff',
+        titleColor: '#fff',
+        bodyColor: '#fff',
         borderColor: '#22c1d4',
         borderWidth: 1,
         padding: 12,
@@ -599,7 +746,7 @@ function SystemDetail() {
       <div className="flex justify-between items-center">
         <div className="flex items-center gap-4">
           <button
-            onClick={() => navigate(`/systems/company/${encodeURIComponent(systemData.company)}`)}
+            onClick={() => navigate(`/systems/company/${systemData.company}`)}
             className="p-2 hover:bg-[#0b3c43] rounded-full transition-colors"
           >
             <ArrowLeft className="w-6 h-6 text-[#22c1d4]" />
@@ -613,12 +760,90 @@ function SystemDetail() {
                 {systemData.company}
               </div>
             </div>
-            <p className="text-[#eeeeee]/60">Host ID: {systemData.hostid} Pool: {systemData.pool} </p>
+            <p className="text-[#eeeeee]/60">
+              Unit ID: {systemData.unit_id} — Pool: {systemData.pool}
+            </p>
           </div>
+        </div>
+        {/* Selettore pool */}
+        <div>
+          {poolList.length > 1 && (
+            <select
+              className="bg-[#06272b] text-[#eeeeee] rounded px-3 py-1 border border-[#22c1d4]/20"
+              value={selectedPool ?? ''}
+              onChange={(e) => {
+                setSelectedPool(e.target.value);
+                // reset anche l’hostid
+                setSelectedHostid(null);
+              }}
+            >
+              {poolList.map((pool) => (
+                <option key={pool} value={pool}>
+                  {pool}
+                </option>
+              ))}
+            </select>
+          )}
         </div>
       </div>
 
-      {/* BLOCCO “System Health Score” */}
+      {/* BLOCCO - ELENCO HOSTID UNIVOCI PER LA POOL SCELTA */}
+      <div className="bg-[#0b3c43] rounded-lg p-6 shadow-lg border border-[#22c1d4]/10">
+        <h2 className="text-xl text-[#f8485e] font-semibold flex items-center gap-2 mb-4">
+          <Server className="h-6 w-6 text-[#22c1d4]" />
+          HostID Overview
+        </h2>
+        <p className="text-[#eeeeee]/60 mb-4">
+          Click on a HostID to load data for that unit.
+        </p>
+
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          {poolRecords.map((hRec) => {
+            // è la card selezionata?
+            const isSelected = (hRec.hostid === selectedHostid);
+            return (
+              <button
+                key={`${hRec.hostid}-${hRec.last_date}`}
+                onClick={() => setSelectedHostid(hRec.hostid)}
+                className="text-left"
+                style={{
+                  border: isSelected ? '2px solid#f8485e' : '1px solid rgba(34,193,212,0.2)',
+                  background: '#06272b',
+                  borderRadius: '0.5rem',
+                  padding: '1rem',
+                  cursor: 'pointer',
+                }}
+              >
+                <div className="flex items-center gap-2 mb-2">
+                  <Server className="text-[#22c1d4] w-5 h-5" />
+                  <span className="font-semibold">
+                    {hRec.hostid ? `HostID: ${hRec.hostid}` : 'No HostID'}
+                  </span>
+                </div>
+                <div className="text-sm text-[#eeeeee]/60">
+                  Last Date: {hRec.last_date || 'N/A'}
+                </div>
+                <div className="text-sm mt-1 flex items-center gap-2">
+                  Telemetry:
+                  {hRec.sending_telemetry ? (
+                    <span className="flex items-center gap-1 text-[#22c1d4] font-medium">
+                      <Signal className="w-4 h-4" />
+                      Active
+                    </span>
+                  ) : (
+                    <span className="flex items-center gap-1 text-[#f8485e] font-medium">
+                      <Lock className="w-4 h-4" />
+                      Inactive
+                    </span>
+                  )}
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* BLOCCO - Health Score */}
       <div className="bg-[#0b3c43] rounded-lg p-6 shadow-lg border border-[#22c1d4]/10">
         <div className="flex items-start justify-between mb-6">
           <div>
@@ -628,55 +853,55 @@ function SystemDetail() {
             </h2>
             <p className="text-[#eeeeee]/60 mt-1">Overall system health assessment</p>
           </div>
-          {(() => {
-            if (!healthHeadCan && !healthHeadBlur) return null;
-            const displayedScore = healthHeadBlur ? '??' : healthScore.score;
-            return (
-              <div className="relative">
-                <div className={`${healthHeadBlur ? 'blur-sm pointer-events-none' : ''} flex flex-col items-center`}>
-                  <div className={`text-4xl font-bold ${getHealthScoreColor(healthScore.score)}`}>
-                    {displayedScore}
-                  </div>
-                  <div className="text-sm text-[#eeeeee]/60">Health Score</div>
+          {healthHeadCan || healthHeadBlur ? (
+            <div className="relative">
+              <div
+                className={`${
+                  healthHeadBlur ? 'blur-sm pointer-events-none' : ''
+                } flex flex-col items-center`}
+              >
+                <div className={getHealthScoreColorClass(healthScore.score, 'text-4xl font-bold')}>
+                  {healthHeadBlur ? '??' : healthScore.score}
                 </div>
-                {healthHeadBlur && (
-                  <div className="absolute inset-0 z-10 flex items-center justify-center">
-                    <Lock className="w-6 h-6 text-white" />
-                  </div>
-                )}
+                <div className="text-sm text-[#eeeeee]/60">Health Score</div>
               </div>
-            );
-          })()}
+              {healthHeadBlur && (
+                <div className="absolute inset-0 z-10 flex items-center justify-center">
+                  <Lock className="w-6 h-6 text-white" />
+                </div>
+              )}
+            </div>
+          ) : null}
         </div>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div className="space-y-4">
             {healthScore.metrics
-              .filter(m => m.name === 'Capacity')
-              .map(metric => renderHealthMetric(metric, capCan, capBlur))}
+              .filter((m) => m.name === 'Capacity')
+              .map((m) => renderHealthMetric(m, capCan, capBlur))}
             {healthScore.metrics
-              .filter(m => m.name === 'Performance')
-              .map(metric => renderHealthMetric(metric, perfCan, perfBlur))}
+              .filter((m) => m.name === 'Performance')
+              .map((m) => renderHealthMetric(m, perfCan, perfBlur))}
           </div>
           <div className="space-y-4">
             {healthScore.metrics
-              .filter(m => m.name === 'Telemetry')
-              .map(metric => renderHealthMetric(metric, telemCan, telemBlur))}
+              .filter((m) => m.name === 'Telemetry')
+              .map((m) => renderHealthMetric(m, telemCan, telemBlur))}
             {healthScore.metrics
-              .filter(m => m.name === 'Snapshots')
-              .map(metric => renderHealthMetric(metric, snapCan, snapBlur))}
+              .filter((m) => m.name === 'Snapshots')
+              .map((m) => renderHealthMetric(m, snapCan, snapBlur))}
           </div>
           <div className="space-y-4">
             {healthScore.metrics
-              .filter(m => m.name === 'Max Usage')
-              .map(metric => renderHealthMetric(metric, mupCan, mupBlur))}
+              .filter((m) => m.name === 'MUP')
+              .map((m) => renderHealthMetric(m, mupCan, mupBlur))}
             {healthScore.metrics
-              .filter(m => m.name === 'Utilization')
-              .map(metric => renderHealthMetric(metric, utilCan, utilBlur))}
+              .filter((m) => m.name === 'Utilization')
+              .map((m) => renderHealthMetric(m, utilCan, utilBlur))}
           </div>
         </div>
       </div>
 
-      {/* BLOCCO “Capacity Forecast” */}
+      {/* BLOCCO - Forecast */}
       {forecastData && (
         <div className="bg-[#0b3c43] rounded-lg p-6 shadow-lg border border-[#22c1d4]/10">
           <div className="flex items-center gap-2 mb-6">
@@ -691,119 +916,119 @@ function SystemDetail() {
         </div>
       )}
 
-      {/* BLOCCO “State Vector Analysis” */}
+      {/* BLOCCO - Behaviour Analysis */}
       <div className="bg-[#0b3c43] rounded-lg p-6 shadow-lg border border-[#22c1d4]/10">
         <div className="flex items-center gap-2 mb-6">
           <Activity className="w-6 h-6 text-[#22c1d4]" />
           <h2 className="text-xl text-[#f8485e] font-semibold">Behaviour Analysis</h2>
         </div>
-        <StateVectorChart hostId={systemData.hostid} pool={systemData.pool} />
+        {/* Integrazione del componente StateVectorChart con il nuovo prop hostId */}
+        {systemData && (
+          <StateVectorChart
+            unitId={systemData.unit_id}
+            pool={systemData.pool}
+            hostId={systemData.hostid} // aggiunto qui il parametro hostId
+          />
+        )}
       </div>
 
       {/* CHART - UsageHistory */}
-      {(() => {
-        if (!chartHistCan && !chartHistBlur) return null;
-        return (
-          <div className="relative bg-[#0b3c43] rounded-lg p-6 shadow-lg border border-[#22c1d4]/10">
-            <div className={`${chartHistBlur ? 'blur-sm pointer-events-none' : ''}`}>
-              <div className="flex items-center justify-between mb-6">
-                <div className="flex items-center gap-2">
-                  <TrendingUp className="w-6 h-6 text-[#22c1d4]" />
-                  <h2 className="text-xl text-[#f8485e] font-semibold">Usage History</h2>
-                </div>
-                <select
-                  value={timeRange}
-                  onChange={(e) => setTimeRange(e.target.value)}
-                  className="bg-[#06272b] text-[#eeeeee] rounded px-3 py-1 border border-[#22c1d4]/20"
-                  disabled={chartHistBlur}
-                >
-                  <option value="1m">Last Month</option>
-                  <option value="3m">Last 3 Months</option>
-                  <option value="6m">Last 6 Months</option>
-                  <option value="1y">Last Year</option>
-                  <option value="all">All</option>
-                </select>
+      {chartHistCan || chartHistBlur ? (
+        <div className="relative bg-[#0b3c43] rounded-lg p-6 shadow-lg border border-[#22c1d4]/10">
+          <div className={chartHistBlur ? 'blur-sm pointer-events-none' : ''}>
+            <div className="flex items-center justify-between mb-6">
+              <div className="flex items-center gap-2">
+                <TrendingUp className="w-6 h-6 text-[#22c1d4]" />
+                <h2 className="text-xl text-[#f8485e] font-semibold">Usage History</h2>
               </div>
-              <div className="h-[400px]">
-                <Line data={displayedHistoryChartData} options={chartOptions} />
-              </div>
+              <select
+                value={timeRange}
+                onChange={(e) => setTimeRange(e.target.value)}
+                className="bg-[#06272b] text-[#eeeeee] rounded px-3 py-1 border border-[#22c1d4]/20"
+                disabled={chartHistBlur}
+              >
+                <option value="1m">Last Month</option>
+                <option value="3m">Last 3 Months</option>
+                <option value="6m">Last 6 Months</option>
+                <option value="1y">Last Year</option>
+                <option value="all">All</option>
+              </select>
             </div>
-            {chartHistBlur && (
-              <div className="absolute inset-0 z-20 flex flex-col items-center justify-center text-center px-4 overflow-hidden">
-                <Lock className="w-6 h-6 text-white" />
-                <span className="text-white text-lg break-words max-w-full">
-                  Upgrade subscription to see Usage History
-                </span>
-              </div>
-            )}
+            <div className="h-[400px]">
+              <Line key={`history-${timeRange}`} data={displayedHistory} options={chartOptions} redraw />
+            </div>
           </div>
-        );
-      })()}
+          {chartHistBlur && (
+            <div className="absolute inset-0 z-20 flex flex-col items-center justify-center text-center px-4 overflow-hidden">
+              <Lock className="w-6 h-6 text-white" />
+              <span className="text-white text-lg break-words max-w-full">
+                Upgrade subscription to see Usage History
+              </span>
+            </div>
+          )}
+        </div>
+      ) : null}
 
       {/* CHART - UsageForecast */}
-      {(() => {
-        if (!chartForeCan && !chartForeBlur) return null;
-        return (
-          <div className="relative bg-[#0b3c43] rounded-lg p-6 shadow-lg border border-[#22c1d4]/10">
-            <div className={`${chartForeBlur ? 'blur-sm pointer-events-none' : ''}`}>
-              <div className="flex items-center gap-2 mb-6">
-                <BarChart className="w-6 h-6 text-[#22c1d4]" />
-                <h2 className="text-xl text-[#f8485e] font-semibold">Usage Forecast</h2>
-              </div>
-              <div className="h-[400px]">
-                <Line data={displayedForecastChartData} options={chartOptions} />
-              </div>
+      {chartForeCan || chartForeBlur ? (
+        <div className="relative bg-[#0b3c43] rounded-lg p-6 shadow-lg border border-[#22c1d4]/10">
+          <div className={chartForeBlur ? 'blur-sm pointer-events-none' : ''}>
+            <div className="flex items-center gap-2 mb-6">
+              <BarChart className="w-6 h-6 text-[#22c1d4]" />
+              <h2 className="text-xl text-[#f8485e] font-semibold">Usage Forecast</h2>
             </div>
-            {chartForeBlur && (
-              <div className="absolute inset-0 z-20 flex flex-col items-center justify-center text-center px-4 overflow-hidden">
-                <Wrench className="w-6 h-6 text-white" />
-                <span className="text-white text-lg break-words max-w-full">
-                  Usage Forecast Work in Progress
-                </span>
-              </div>
-            )}
+            <div className="h-[400px]">
+              <Line key={`forecast-${timeRange}`} data={displayedForecast} options={chartOptions} redraw />
+            </div>
           </div>
-        );
-      })()}
+          {chartForeBlur && (
+            <div className="absolute inset-0 z-20 flex flex-col items-center justify-center text-center px-4 overflow-hidden">
+              <Wrench className="w-6 h-6 text-white" />
+              <span className="text-white text-lg break-words max-w-full">
+                Usage Forecast Work in Progress
+              </span>
+            </div>
+          )}
+        </div>
+      ) : null}
     </div>
   );
 
-  // --- RENDER DELLA SINGOLA METRICA ---
+  // =============== RENDER FUNZIONI DI SUPPORTO ===============
   function renderHealthMetric(metric: HealthMetric, canAccess: boolean, shouldBlur: boolean) {
     if (!canAccess && !shouldBlur) return null;
-    const displayedName = metric.name;
-    const displayedMessage = shouldBlur ? '???' : metric.message;
-    const displayedImpact = shouldBlur ? '???' : metric.impact;
-    const displayedWeight = shouldBlur ? '??' : `${metric.weight.toFixed(1)}%`;
+
     const displayedValue = shouldBlur
       ? '??'
-      : (metric.name === 'Capacity' || metric.name === 'Max Usage')
-        ? `${metric.rawValue}${metric.unit || ''}`
-        : `${metric.value}${metric.unit || ''}`;
+      : metric.rawValue !== undefined && (metric.name === 'Capacity' || metric.name === 'MUP')
+      ? `${metric.rawValue}${metric.unit || ''}`
+      : `${metric.value}${metric.unit || ''}`;
+
+    const displayedMessage = shouldBlur ? '???' : metric.message;
+
     return (
       <div key={metric.name} className="relative h-[160px]">
-        <div className={`
-            p-4 rounded-lg mb-4 h-full
-            ${getStatusBg(metric.status, metric.impact)}
-            ${shouldBlur ? 'blur-sm pointer-events-none' : ''}
-          `}>
-          <div
-            className={`absolute bottom-0 left-0 h-1 ${getStatusBg(metric.status, metric.impact)}`}
-            style={{ width: shouldBlur ? '50%' : `${metric.value}%` }}
-          />
+        <div
+          className={`p-4 rounded-lg mb-4 h-full ${getStatusBg(metric.status)} ${
+            shouldBlur ? 'blur-sm pointer-events-none' : ''
+          }`}
+        >
           <div className="flex items-start justify-between mb-2">
             <div className="flex items-center gap-2">
-              <metric.icon className={`w-5 h-5 ${getStatusColor(metric.status, metric.impact)}`} />
-              <span className="font-semibold">{displayedName}</span>
+              {metric.icon &&
+                React.createElement(metric.icon, {
+                  className: getStatusColorClass(metric.status, 'w-5 h-5')
+                })}
+              <span className="font-semibold">{metric.name}</span>
             </div>
-            <div className={`text-lg font-bold ${getStatusColor(metric.status, metric.impact)}`}>
+            <div className={`text-lg font-bold ${getStatusColorClass(metric.status)}`}>
               {displayedValue}
             </div>
           </div>
           <p className="text-sm text-[#eeeeee]/80 mb-2 line-clamp-2">{displayedMessage}</p>
           <div className="flex justify-between items-center text-sm mt-auto">
-            <span className={getStatusColor(metric.status, metric.impact)}>{displayedImpact}</span>
-            <span className="text-[#eeeeee]/60">Weight: {displayedWeight}</span>
+            <span className="text-[#eeeeee]/60">{metric.impact}</span>
+            <span className="text-[#eeeeee]/60">Weight: {metric.weight}%</span>
           </div>
         </div>
         {shouldBlur && (
@@ -818,7 +1043,6 @@ function SystemDetail() {
     );
   }
 
-  // --- RENDER DEL BOX FORECAST ---
   function renderForecastBox(
     title: string,
     daysValue: number,
@@ -828,10 +1052,10 @@ function SystemDetail() {
     textColor: string
   ) {
     if (!canAccess && !shouldBlur) return null;
-    const displayedDays = shouldBlur ? '??' : (daysValue === -1 ? '?' : daysValue);
+    const displayedDays = shouldBlur ? '??' : daysValue === -1 ? '?' : daysValue;
     return (
       <div className="relative p-4 rounded-lg bg-[#06272b]">
-        <div className={`${shouldBlur ? 'blur-sm pointer-events-none' : ''}`}>
+        <div className={shouldBlur ? 'blur-sm pointer-events-none' : ''}>
           <h3 className="text-lg font-medium mb-2">{title}</h3>
           <div className="text-3xl font-bold" style={{ color: textColor }}>
             {displayedDays} {unit}
@@ -848,6 +1072,38 @@ function SystemDetail() {
         )}
       </div>
     );
+  }
+
+  function getStatusBg(status: string) {
+    switch (status) {
+      case 'good':
+        return 'bg-[#22c1d4]/20';
+      case 'warning':
+        return 'bg-[#eeeeee]/20';
+      case 'critical':
+        return 'bg-[#f8485e]/20';
+      default:
+        return 'bg-[#22c1d4]/10';
+    }
+  }
+
+  function getStatusColorClass(status: string, extra: string = '') {
+    switch (status) {
+      case 'good':
+        return `text-[#22c1d4] ${extra}`;
+      case 'warning':
+        return `text-[#eeeeee] ${extra}`;
+      case 'critical':
+        return `text-[#f8485e] ${extra}`;
+      default:
+        return extra;
+    }
+  }
+
+  function getHealthScoreColorClass(score: number, extra: string = '') {
+    if (score >= 80) return `text-[#22c1d4] ${extra}`;
+    if (score >= 50) return `text-[#eeeeee] ${extra}`;
+    return `text-[#f8485e] ${extra}`;
   }
 }
 
