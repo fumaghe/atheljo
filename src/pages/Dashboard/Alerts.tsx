@@ -375,7 +375,7 @@ const Alerts: React.FC<AlertsProps> = ({ filters }) => {
               hostid: sys.hostid,
               pool: sys.pool,
               company: sys.company,
-              message: 'Telemetry inactive: system not sending data.',
+              message: 'Telemetry is inactive: system is not sending data.',
               date: new Date().toISOString(),
               type: 'telemetryInactive',
               importance: 'red'

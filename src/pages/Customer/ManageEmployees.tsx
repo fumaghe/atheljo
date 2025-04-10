@@ -24,17 +24,17 @@ import Select from 'react-select';
 import { Navigate } from 'react-router-dom';
 import NoPermission from '../../pages/NoPermission';
 
-// Interface per un item di permesso
+// Interface for a permission item
 interface PermissionItem {
-  id: string; // es. "Dashboard__Alerts"
+  id: string; // e.g. "Dashboard__Alerts"
   page: string;
   component: string;
 }
 
-// Tipo specifico per i ruoli degli impiegati
+// Specific type for employee roles
 type EmployeeRole = 'employee' | 'admin_employee';
 
-// Informazioni di stile per subscription
+// Subscription styling info
 const subscriptionInfos: Record<'Essential' | 'Advantage' | 'Premiere', {
   label: string;
   icon: JSX.Element;
@@ -76,7 +76,7 @@ const pageIcons: Record<string, JSX.Element> = {
   Reports: <FaFileAlt size={16} />
 };
 
-// Funzione helper per tradurre un permesso in linguaggio naturale
+// Helper to translate a permission into plain language
 const translatePermission = (permId: string): string => {
   const parts = permId.split('__');
   if (parts.length === 2) {
@@ -87,7 +87,7 @@ const translatePermission = (permId: string): string => {
 };
 
 // ============================
-// Componente EmployeeCard
+// EmployeeCard Component
 // ============================
 interface EmployeeCardProps {
   employee: User;
@@ -99,7 +99,7 @@ interface EmployeeCardProps {
 const EmployeeCard: React.FC<EmployeeCardProps> = ({ employee, onEdit, onDelete, groupedPermissions, subInfo }) => {
   const [expanded, setExpanded] = useState(false);
 
-  // Calcola quante sezioni sono abilitate per questo employee
+  // Calculate how many sections are enabled for this employee
   const enabledSections = Object.keys(groupedPermissions).filter(page =>
     employee.permissions?.some(perm => groupedPermissions[page].some(p => p.id === perm))
   ).length;
@@ -115,23 +115,23 @@ const EmployeeCard: React.FC<EmployeeCardProps> = ({ employee, onEdit, onDelete,
           )}
           <div>
             <h3 className="font-semibold text-[#eeeeee] text-xl">{employee.username}</h3>
-            <p className="text-sm text-[#eeeeee]/70">Ruolo: {employee.role}</p>
+            <p className="text-sm text-[#eeeeee]/70">Role: {employee.role}</p>
             <p className="text-sm text-[#eeeeee]/70">
-              Permessi: {enabledSections} sezioni abilitate (clicca per dettagli)
+              Permissions: {enabledSections} sections enabled (click for details)
             </p>
           </div>
         </div>
         <div className="flex items-center gap-2">
           <button 
             onClick={(e) => { e.stopPropagation(); onEdit(employee); }} 
-            title="Modifica" 
+            title="Edit" 
             className="p-2 hover:bg-[#0b3c43] rounded-full transition-colors"
           >
             <Edit className="w-5 h-5 text-[#22c1d4]" />
           </button>
           <button 
             onClick={(e) => { e.stopPropagation(); onDelete(employee.id); }} 
-            title="Elimina" 
+            title="Delete" 
             className="p-2 hover:bg-[#0b3c43] rounded-full transition-colors"
           >
             <Trash2 className="w-5 h-5 text-[#f8485e]" />
@@ -171,9 +171,9 @@ const EmployeeCard: React.FC<EmployeeCardProps> = ({ employee, onEdit, onDelete,
 };
 
 // ============================
-// Componente EmployeeWizard (Step Form)
+// EmployeeWizard Component (Step Form)
 // ============================
-// Aggiungiamo le prop "parentId" e "parentSubscription" per ricevere l'ID e la subscription del customer genitore
+// Added "existingUsernames" prop for real‑time username verification
 interface EmployeeWizardProps {
   employeeToEdit?: User;
   onSave: (employee: Partial<User>) => Promise<void>;
@@ -185,6 +185,7 @@ interface EmployeeWizardProps {
   parentId: string;
   parentSubscription: "None" | "Essential" | "Advantage" | "Premiere";
   onCancel: () => void;
+  existingUsernames: string[];
 }
 const EmployeeWizard: React.FC<EmployeeWizardProps> = ({
   employeeToEdit,
@@ -196,9 +197,10 @@ const EmployeeWizard: React.FC<EmployeeWizardProps> = ({
   currentCompany,
   parentId,
   parentSubscription,
-  onCancel
+  onCancel,
+  existingUsernames
 }) => {
-  // Se stiamo modificando, inizializziamo lo stato con i dati dell'employee esistente
+  // If we are editing, initialize state with the existing employee data
   const [newEmployee, setNewEmployee] = useState<Partial<User>>(
     employeeToEdit
       ? { ...employeeToEdit }
@@ -210,7 +212,7 @@ const EmployeeWizard: React.FC<EmployeeWizardProps> = ({
           permissions: []
         }
   );
-  // Stato per le visible companies (gestito localmente nel form per admin_employee)
+  // State for visible companies (for admin_employee)
   const [visibleCompanies, setVisibleCompanies] = useState<string[]>(
     employeeToEdit && employeeToEdit.role === 'admin_employee' && employeeToEdit.visibleCompanies
       ? employeeToEdit.visibleCompanies
@@ -218,7 +220,23 @@ const EmployeeWizard: React.FC<EmployeeWizardProps> = ({
   );
   const [step, setStep] = useState(1);
 
-  // Selezione dei permessi
+  // State for real-time username verification
+  const [usernameAvailable, setUsernameAvailable] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    // If there is no value or if we're editing and the username hasn't changed, consider it available
+    if (!newEmployee.username || (employeeToEdit && newEmployee.username === employeeToEdit.username)) {
+      setUsernameAvailable(true);
+      return;
+    }
+    if (existingUsernames.includes(newEmployee.username)) {
+      setUsernameAvailable(false);
+    } else {
+      setUsernameAvailable(true);
+    }
+  }, [newEmployee.username, existingUsernames, employeeToEdit]);
+
+  // Permission selection and toggle
   const togglePermission = (permId: string) => {
     setNewEmployee(prev => {
       const current = prev.permissions || [];
@@ -245,7 +263,7 @@ const EmployeeWizard: React.FC<EmployeeWizardProps> = ({
 
   const renderStepContent = () => {
     if (step === 1) {
-      // Informazioni base
+      // Basic information
       return (
         <div className="space-y-4">
           <div>
@@ -254,9 +272,14 @@ const EmployeeWizard: React.FC<EmployeeWizardProps> = ({
               type="text"
               value={newEmployee.username}
               onChange={(e) => setNewEmployee({ ...newEmployee, username: e.target.value })}
-              className="w-full bg-[#06272b] rounded-lg px-4 py-2 border border-[#22c1d4]/20"
-              placeholder="Inserisci username"
+              className={`w-full bg-[#06272b] rounded-lg px-4 py-2 border ${
+                usernameAvailable === false ? 'border-[#f8485e]' : 'border-[#22c1d4]'
+              }`}
+              placeholder="Enter username"
             />
+            {usernameAvailable === false && (
+              <p className="mt-1 text-sm text-[#f8485e]">Username already in use</p>
+            )}
           </div>
           <div>
             <label className="block text-sm font-medium mb-2">Password</label>
@@ -264,19 +287,19 @@ const EmployeeWizard: React.FC<EmployeeWizardProps> = ({
               type="password"
               value={newEmployee.password || ''}
               onChange={(e) => setNewEmployee({ ...newEmployee, password: e.target.value })}
-              className="w-full bg-[#06272b] rounded-lg px-4 py-2 border border-[#22c1d4]/20"
-              placeholder="Inserisci password"
+              className="w-full bg-[#06272b] rounded-lg px-4 py-2 border border-[#22c1d4]"
+              placeholder="Enter password"
             />
           </div>
           <div>
-            <label className="block text-sm font-medium mb-2">Ruolo</label>
+            <label className="block text-sm font-medium mb-2">Role</label>
             <select
               value={newEmployee.role || 'employee'}
               onChange={(e) =>
                 setNewEmployee({ ...newEmployee, role: e.target.value as EmployeeRole })
               }
-              className="w-full bg-[#06272b] rounded-lg px-4 py-2 border border-[#22c1d4]/20"
-              disabled={!isAdmin}  // Se non admin non si può cambiare il ruolo
+              className="w-full bg-[#06272b] rounded-lg px-4 py-2 border border-[#22c1d4]"
+              disabled={!isAdmin}
             >
               <option value="employee">Employee</option>
               {isAdmin && <option value="admin_employee">Admin Employee</option>}
@@ -356,12 +379,12 @@ const EmployeeWizard: React.FC<EmployeeWizardProps> = ({
         </div>
       );
     } else if (step === 2) {
-      // Selezione dei permessi
+      // Permissions selection
       return (
         <div className="space-y-4">
           {Object.entries(groupedPermissions).length === 0 ? (
             <span className="text-sm text-[#eeeeee]/70">
-              Nessun permesso disponibile per il livello di subscription
+              No permissions available for the current subscription level
             </span>
           ) : (
             Object.entries(groupedPermissions)
@@ -413,18 +436,26 @@ const EmployeeWizard: React.FC<EmployeeWizardProps> = ({
         </div>
       );
     } else if (step === 3) {
-      // Preview riepilogativo
+      // Summary preview
       return (
         <div className="space-y-4">
-          <h3 className="text-xl font-semibold text-[#eeeeee]">Riepilogo</h3>
+          <h3 className="text-xl font-semibold text-[#eeeeee]">Summary</h3>
           <p className="text-[#eeeeee]">Username: {newEmployee.username}</p>
-          <p className="text-[#eeeeee]">Ruolo: {newEmployee.role}</p>
+          <p className="text-[#eeeeee]">Role: {newEmployee.role}</p>
           <p className="text-[#eeeeee]">
-            Permessi selezionati: {newEmployee.permissions && newEmployee.permissions.length > 0 ? newEmployee.permissions.map(perm => translatePermission(perm)).join(', ') : 'Nessuno'}
+            Selected permissions:{' '}
+            {newEmployee.permissions && newEmployee.permissions.length > 0
+              ? newEmployee.permissions.map(perm => translatePermission(perm)).join(', ')
+              : 'None'}
           </p>
           {isAdmin && newEmployee.role === 'admin_employee' && (
             <p className="text-[#eeeeee]">
-              Visible Companies: {visibleCompanies.length > 0 ? (visibleCompanies.includes('all') ? 'All Companies' : visibleCompanies.join(', ')) : 'Nessuna'}
+              Visible Companies:{' '}
+              {visibleCompanies.length > 0
+                ? visibleCompanies.includes('all')
+                  ? 'All Companies'
+                  : visibleCompanies.join(', ')
+                : 'None'}
             </p>
           )}
         </div>
@@ -435,27 +466,32 @@ const EmployeeWizard: React.FC<EmployeeWizardProps> = ({
   const handleSubmit = async () => {
     const payload: Partial<User> = {
       ...newEmployee,
-      // Aggiungiamo il parentCustomerId preso dalla prop parentId
       parentCustomerId: parentId,
-      // Per admin_employee, usiamo lo stato locale visibleCompanies; se contiene 'all' allora sostituiamo con availableCompanies
       visibleCompanies:
         newEmployee.role === 'admin_employee'
-          ? (visibleCompanies.includes('all') ? availableCompanies : visibleCompanies)
+          ? visibleCompanies.includes('all')
+            ? availableCompanies
+            : visibleCompanies
           : [],
     };
 
-    // Impostiamo la subscription ereditata dal parent anche per employee
     if (newEmployee.role === 'employee' || newEmployee.role === 'admin_employee') {
       payload.subscription = parentSubscription;
     }
 
+    // Prevent submitting if the username is not available
+    if (usernameAvailable === false) {
+      alert("The username is already in use. Please choose another.");
+      return;
+    }
+    
     await onSave(payload);
   };
 
   return (
     <div className="bg-[#0b3c43] rounded-lg p-6 shadow-lg space-y-6">
       <h2 className="text-2xl font-semibold text-[#eeeeee]">
-        {employeeToEdit ? 'Modifica Employee' : 'Aggiungi Nuovo Employee'}
+        {employeeToEdit ? 'Edit Employee' : 'Add New Employee'}
       </h2>
       {renderStepContent()}
       <div className="flex justify-between">
@@ -463,7 +499,7 @@ const EmployeeWizard: React.FC<EmployeeWizardProps> = ({
           onClick={onCancel}
           className="flex items-center gap-2 px-4 py-2 rounded-lg font-semibold bg-[#06272b] hover:bg-[#06272b]/80 transition-colors text-[#eeeeee]"
         >
-          Annulla
+          Cancel
         </button>
         <div className="flex gap-2">
           {step > 1 && (
@@ -471,15 +507,20 @@ const EmployeeWizard: React.FC<EmployeeWizardProps> = ({
               onClick={() => setStep(step - 1)}
               className="flex items-center gap-2 px-4 py-2 rounded-lg font-semibold bg-[#06272b] hover:bg-[#06272b]/80 transition-colors text-[#eeeeee]"
             >
-              Indietro
+              Back
             </button>
           )}
           {step < 3 ? (
             <button
               onClick={() => setStep(step + 1)}
-              className={`flex items-center gap-2 px-4 py-2 rounded-lg font-semibold bg-[${subInfo.highlightColor}] text-[#06272b] hover:bg-[${subInfo.highlightColor}]/90 transition-colors`}
+              disabled={step === 1 && (!newEmployee.username || usernameAvailable === false)}
+              className={`flex items-center gap-2 px-4 py-2 rounded-lg font-semibold transition-colors ${
+                step === 1 && (!newEmployee.username || usernameAvailable === false)
+                  ? 'bg-gray-500 cursor-not-allowed text-[#06272b]'
+                  : `bg-[${subInfo.highlightColor}] text-[#06272b] hover:bg-[${subInfo.highlightColor}]/90`
+              }`}
             >
-              Avanti
+              Next
             </button>
           ) : (
             <button
@@ -487,7 +528,7 @@ const EmployeeWizard: React.FC<EmployeeWizardProps> = ({
               className={`flex items-center gap-2 px-4 py-2 rounded-lg font-semibold bg-[${subInfo.highlightColor}] text-[#06272b] hover:bg-[${subInfo.highlightColor}]/90 transition-colors`}
             >
               <Save className="w-5 h-5" />
-              Salva Employee
+              Save Employee
             </button>
           )}
         </div>
@@ -497,12 +538,11 @@ const EmployeeWizard: React.FC<EmployeeWizardProps> = ({
 };
 
 // ============================
-// Componente ManageEmployees (Main)
+// ManageEmployees Component (Main)
 // ============================
 const ManageEmployees: React.FC = () => {
   const { user, getUsers, addUser, updateUser, deleteUser, isAuthenticated, isInitializingSession } = useAuth();
 
-  // Dopo i controlli iniziali sappiamo che user non è null
   if (isInitializingSession) {
     return (
       <div style={{ color: '#eeeeee', textAlign: 'center', padding: '2rem' }}>
@@ -513,7 +553,6 @@ const ManageEmployees: React.FC = () => {
   if (!isAuthenticated || !user) {
     return <Navigate to="/login" replace />;
   }
-  // Se l'utente è employee o admin_employee non può accedere a questa pagina
   if (user.role === 'employee' || user.role === 'admin_employee') {
     return <NoPermission />;
   }
@@ -537,7 +576,7 @@ const ManageEmployees: React.FC = () => {
     });
   }, [getUsers, user]);
 
-  // Fetch permissions dal backend
+  // Fetch permissions from the backend
   useEffect(() => {
     const fetchPermissions = async () => {
       try {
@@ -550,7 +589,7 @@ const ManageEmployees: React.FC = () => {
         const allPermissions = await res.json();
         const customerSubscription = user!.subscription || 'None';
 
-        // Includiamo anche le permission con livello "blur"
+        // Also consider permissions with "blur" level
         const filtered: PermissionItem[] = allPermissions
           .filter((sp: any) => {
             if (customerSubscription === 'None') return false;
@@ -574,7 +613,7 @@ const ManageEmployees: React.FC = () => {
     }
   }, [user]);
 
-  // Fetch companies dal backend
+  // Fetch companies from the backend
   useEffect(() => {
     const fetchCompanies = async () => {
       try {
@@ -594,23 +633,23 @@ const ManageEmployees: React.FC = () => {
     fetchCompanies();
   }, []);
 
-  // Raggruppa i permessi per pagina
+  // Group permissions by page
   const groupedPermissions = allowedPermissions.reduce((acc, perm) => {
     if (!acc[perm.page]) acc[perm.page] = [];
     acc[perm.page].push(perm);
     return acc;
   }, {} as Record<string, PermissionItem[]>);
 
-  // Stile basato sulla subscription del cliente
+  // Subscription style based on the client subscription
   const subInfo =
     user && user.subscription && subscriptionInfos[user.subscription as 'Essential' | 'Advantage' | 'Premiere']
       ? subscriptionInfos[user.subscription as 'Essential' | 'Advantage' | 'Premiere']
       : subscriptionInfos['Essential'];
 
-  // Handler per aggiungere un nuovo employee (il payload è già costruito nel form EmployeeWizard)
+  // Handler to add a new employee
   const handleAddEmployee = async (newEmp: Partial<User>) => {
     if (!newEmp.username || !newEmp.password) {
-      alert('Compilare i campi obbligatori (username, password).');
+      alert('Please fill in the required fields (username, password).');
       return;
     }
     const createdEmp = await addUser(newEmp as User);
@@ -619,11 +658,11 @@ const ManageEmployees: React.FC = () => {
       setIsAddingEmployee(false);
       setEditingEmployee(null);
     } else {
-      alert('Creazione employee fallita.');
+      alert('Employee creation failed.');
     }
   };
 
-  // Handler per aggiornare un employee (il payload è già costruito nel form EmployeeWizard)
+  // Handler to update an employee
   const handleUpdateEmployee = async (updatedEmp: Partial<User>) => {
     if (!updatedEmp.id) return;
     if (!updatedEmp.password) {
@@ -640,9 +679,9 @@ const ManageEmployees: React.FC = () => {
     }
   };
 
-  // Handler per eliminare un employee
+  // Handler to delete an employee
   const handleDeleteEmployee = async (id: string) => {
-    if (window.confirm('Sei sicuro di voler eliminare questo employee?')) {
+    if (window.confirm('Are you sure you want to delete this employee?')) {
       const deleted = await deleteUser(id);
       if (deleted) {
         setEmployees(prev => prev.filter(u => u.id !== id));
@@ -650,7 +689,7 @@ const ManageEmployees: React.FC = () => {
     }
   };
 
-  // Handler per attivare la modalità modifica
+  // Handler to start editing an employee
   const handleEditEmployee = (employee: User) => {
     setEditingEmployee(employee);
     setIsAddingEmployee(true);
@@ -664,54 +703,55 @@ const ManageEmployees: React.FC = () => {
     <div className="space-y-6 p-4">
       {/* Header */}
       <div className="flex justify-between items-center">
-        <h1 className="text-3xl font-bold text-[#eeeeee]">Gestione Employees</h1>
+        <h1 className="text-3xl font-bold text-[#eeeeee]">Manage Employees</h1>
         <div className="flex gap-4">
           <button
             onClick={() => { setIsAddingEmployee(!isAddingEmployee); setEditingEmployee(null); }}
             className={`flex items-center gap-2 bg-[${subInfo.highlightColor}] text-[#06272b] px-4 py-2 rounded-lg font-semibold hover:bg-[${subInfo.highlightColor}]/90 transition-colors`}
           >
             {isAddingEmployee ? <X className="w-5 h-5" /> : <UserPlus className="w-5 h-5" />}
-            {isAddingEmployee ? 'Annulla' : 'Aggiungi Employee'}
+            {isAddingEmployee ? 'Cancel' : 'Add Employee'}
           </button>
         </div>
       </div>
 
-      {/* Campo di ricerca */}
+      {/* Search field */}
       <div className="bg-[#0b3c43] rounded-lg p-4 shadow-lg">
         <div className="relative">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-[#eeeeee]/60" />
           <input
             type="text"
-            placeholder="Cerca employee..."
+            placeholder="Search employee..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full pl-10 pr-4 py-2 bg-[#06272b] rounded-lg border border-[#22c1d4]/20 focus:outline-none focus:border-[#22c1d4]"
+            className="w-full pl-10 pr-4 py-2 bg-[#06272b] rounded-lg border border-[#22c1d4] focus:outline-none focus:border-[#22c1d4]"
           />
         </div>
       </div>
 
-      {/* Form per aggiunta/modifica employee */}
+      {/* Add/Edit Employee Form */}
       {isAddingEmployee && (
         <EmployeeWizard 
           employeeToEdit={editingEmployee || undefined}
           onSave={editingEmployee ? handleUpdateEmployee : handleAddEmployee}
-          availableCompanies={availableCompanies} 
+          availableCompanies={availableCompanies}
           groupedPermissions={groupedPermissions}
           subInfo={subInfo}
           isAdmin={user!.role === 'admin'}
           currentCompany={user!.company}
-          parentId={user!.id}  // Passiamo il parentCustomerId
-          parentSubscription={user!.subscription}  // Passiamo la subscription del parent
+          parentId={user!.id}
+          parentSubscription={user!.subscription}
           onCancel={() => { setIsAddingEmployee(false); setEditingEmployee(null); }}
+          existingUsernames={employees.map(e => e.username)}
         />
       )}
 
-      {/* Lista degli Employees */}
+      {/* Employee List */}
       <div className="bg-[#0b3c43] rounded-lg p-6 shadow-lg">
         <h2 className="text-2xl font-semibold text-[#eeeeee] mb-4">Employees</h2>
         {filteredEmployees.length === 0 ? (
           <div className="text-center py-8 text-[#eeeeee]/60">
-            Nessun employee trovato con questi filtri.
+            No employees found with these filters.
           </div>
         ) : (
           <div className="space-y-4">

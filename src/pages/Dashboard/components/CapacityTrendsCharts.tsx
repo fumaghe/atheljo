@@ -183,7 +183,7 @@ const CapacityTrendsCharts: React.FC<CapacityTrendsChartsProps> = ({
             <div className="flex items-center justify-between mb-2">
               <h2 className="text-xl text-[#f8485e] font-semibold flex items-center gap-2">
                 <Database className="w-6 h-6 text-[#22c1d4]" />
-                Used Trends
+                Usage Trends
               </h2>
               <select
                 value={usedUnit}
