@@ -5,7 +5,8 @@ export interface CapacityData {
   perc_used: number;
   perc_snap: number;
   pool: string;
-  hostid: string;
+  hostid?: string;
+  unit_id: string;
   total_space: number;
 }
 
@@ -31,10 +32,14 @@ export interface SystemData {
 
 export interface TelemetryData {
   date: string;
-  hostid: string;
-  used_space: number;
+  unit_id: string;
+  pool: string;
+  used: number;
   total_space: number;
-  used_percentage: number;
+  perc_used: number;
+  snap: number;
+  perc_snap: number;
+  hostid: string | undefined;
 }
 
 export interface AggregatedStats {

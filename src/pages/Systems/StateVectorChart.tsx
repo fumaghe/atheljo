@@ -75,7 +75,7 @@ const referenceLinePlugin = {
     ctx.fillStyle = '#cccccc';
     ctx.textAlign = 'right';
     ctx.fillText(
-      `Media: ${yValue.toFixed(2)} ${refLine.unit}`,
+      `Avg: ${yValue.toFixed(2)} ${refLine.unit}`,
       x.right - 10,
       yPixel - 5
     );
@@ -182,7 +182,7 @@ const StateVectorChart: React.FC<StateVectorChartProps> = ({
   };
 
   // Opzioni per i dropdown
-  const timeRangeOptions = ['7d', '1m', '3m', '6m', '1y', 'all'];
+  const timeRangeOptions = ['14d', '1m', '3m', '6m', '1y', 'all'];
   const chartTypeOptions = [
     { value: 'line', label: 'Line Chart' },
     { value: 'candlestick', label: 'Candlestick' },
@@ -200,8 +200,8 @@ const StateVectorChart: React.FC<StateVectorChartProps> = ({
   // Label “umane” per i range
   const getRangeLabel = (r: string): string => {
     switch (r) {
-      case '7d':
-        return 'Last 7 days';
+      case '14d':
+        return 'Last 14 days';
       case '1m':
         return 'Last month';
       case '3m':
@@ -244,8 +244,8 @@ const StateVectorChart: React.FC<StateVectorChartProps> = ({
     const now = new Date();
     const cutoff = new Date();
     switch (range) {
-      case '7d':
-        cutoff.setDate(now.getDate() - 7);
+      case '14d':
+        cutoff.setDate(now.getDate() - 14);
         break;
       case '1m':
         cutoff.setMonth(now.getMonth() - 1);
@@ -347,8 +347,8 @@ const StateVectorChart: React.FC<StateVectorChartProps> = ({
   ): { start: Date; end: Date } => {
     const now = new Date();
     switch (range) {
-      case '7d':
-        return { start: subDays(now, 7), end: now };
+      case '14d':
+        return { start: subDays(now, 14), end: now };
       case '1m':
         return { start: subMonths(now, 1), end: now };
       case '3m':
@@ -368,8 +368,8 @@ const StateVectorChart: React.FC<StateVectorChartProps> = ({
     currentStart: Date
   ): { start: Date; end: Date } => {
     switch (range) {
-      case '7d':
-        return { start: subDays(currentStart, 7), end: currentStart };
+      case '14d':
+        return { start: subDays(currentStart, 14), end: currentStart };
       case '1m':
         return { start: subMonths(currentStart, 1), end: currentStart };
       case '3m':
@@ -559,6 +559,7 @@ const StateVectorChart: React.FC<StateVectorChartProps> = ({
                 fillStyle: '#22c1d4',
                 hidden: false,
                 index: 0,
+                fontColor: '#eeeeee',
               },
               {
                 text: 'Decrescita',
@@ -566,6 +567,7 @@ const StateVectorChart: React.FC<StateVectorChartProps> = ({
                 fillStyle: '#f8485e',
                 hidden: false,
                 index: 1,
+                fontColor: '#eeeeee',
               },
             ];
           },

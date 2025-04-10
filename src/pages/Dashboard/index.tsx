@@ -27,10 +27,10 @@ export default function Dashboard() {
   } = useDashboardData(user);
 
   const [filtersOpen, setFiltersOpen] = useState(false);
-  const [usedUnit, setUsedUnit] = useState<'TB' | '%'>('TB');
-  const [snapUnit, setSnapUnit] = useState<'TB' | '%'>('TB');
+  const [usedUnit, setUsedUnit] = useState<'GB' | 'GiB' | 'TB' | '%'>('TB');
+  const [snapUnit, setSnapUnit] = useState<'GB' | 'GiB' | 'TB' | '%'>('TB');
 
-  // Subscription permissions per le varie sezioni
+  // Subscription permissions
   const filtersSubscription = useSubscriptionPermissions('Dashboard', 'Filters');
   const alertsSubscription = useSubscriptionPermissions('Dashboard', 'Alerts Card');
   const capTrendSubscription = useSubscriptionPermissions('Dashboard', 'Capacity Trends Chart');
@@ -59,7 +59,6 @@ export default function Dashboard() {
         subscription={filtersSubscription}
       />
       <AlertsSection filters={filters} subscription={alertsSubscription} />
-
 
       {isLoading && !aggregatedStats ? (
         <div className="flex items-center justify-center h-[60vh]">

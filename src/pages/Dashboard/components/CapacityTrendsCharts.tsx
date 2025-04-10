@@ -4,19 +4,19 @@ import { Database, HardDrive, Lock } from 'lucide-react'
 import { baseChartOptions } from '../chartConfig'
 
 /**
- * Le unità di misura che gestiamo.
+ * Le unità di misura che gestiamo:
  * 'GB' | 'GiB' | 'TB' | '%'
  */
 type Unit = 'GB' | 'GiB' | 'TB' | '%'
 
 interface CapacityTrendsChartsProps {
-  usedUnit: Unit
-  setUsedUnit: React.Dispatch<React.SetStateAction<Unit>>
-  snapUnit: Unit
-  setSnapUnit: React.Dispatch<React.SetStateAction<Unit>>
-  prepareUsedTrendsChart: (unit: Unit) => any
-  prepareSnapshotTrendsChart: (unit: Unit) => any
-  subscription: { canAccess: boolean; shouldBlur: boolean }
+  usedUnit: Unit;
+  setUsedUnit: React.Dispatch<React.SetStateAction<Unit>>;
+  snapUnit: Unit;
+  setSnapUnit: React.Dispatch<React.SetStateAction<Unit>>;
+  prepareUsedTrendsChart: (unit: Unit) => any;
+  prepareSnapshotTrendsChart: (unit: Unit) => any;
+  subscription: { canAccess: boolean; shouldBlur: boolean };
 }
 
 const CapacityTrendsCharts: React.FC<CapacityTrendsChartsProps> = ({
