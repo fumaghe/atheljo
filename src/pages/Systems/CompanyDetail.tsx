@@ -15,7 +15,7 @@ import { useAuth } from '../../context/AuthContext';
 import { useSubscriptionPermissions } from '../../hooks/useSubscriptionPermissions';
 import firestore from '../../firebaseClient';
 import { collection, query, where, getDocs } from 'firebase/firestore';
-// Importa la funzione centralizzata dal file utils
+import LoadingDots from '../Dashboard/components/LoadingDots';
 import { calculateSystemHealthScore } from '../../utils/calculateSystemHealthScore';
 
 interface SystemData {
@@ -274,7 +274,7 @@ export default function CompanyDetail() {
   if (isLoading) {
     return (
       <div className="flex items-center justify-center h-[60vh]">
-        <div className="text-[#22c1d4] text-xl">Loading systems data...</div>
+        <LoadingDots/>
       </div>
     );
   }
@@ -499,7 +499,7 @@ export default function CompanyDetail() {
                   <div className="text-center">
                     <div className="text-sm text-[#eeeeee]/60">Performance</div>
                     <div className={`font-semibold ${performanceColor}`}>
-                      {system.avg_time} min
+                      {system.avg_speed} min
                     </div>
                   </div>
                 </div>

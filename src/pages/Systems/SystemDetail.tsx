@@ -25,6 +25,7 @@ import firestore from '../../firebaseClient';
 import { collection, query, where, getDocs } from 'firebase/firestore';
 import { useSubscriptionPermissions } from '../../hooks/useSubscriptionPermissions';
 import { useAuth } from '../../context/AuthContext';
+import LoadingDots from '../Dashboard/components/LoadingDots';
 import { calculateSystemHealthScore } from '../../utils/calculateSystemHealthScore';
 
 // =============== INTERFACCE ===============
@@ -57,7 +58,7 @@ interface TelemetryData {
   perc_used: number;
   snap: number;
   perc_snap: number;
-  // (se hai un campo "hostid" anche in capacity_trends, aggiungilo qui)
+  // se hai un campo "hostid" anche in capacity_trends, aggiungilo qui
   hostid?: string; 
 }
 
@@ -67,7 +68,7 @@ interface ForecastPoint {
   pool: string;
   forecasted_usage: number;
   forecasted_percentage: number;
-  // (se hai un campo "hostid" anche in usage_forecast, aggiungilo qui)
+  // se hai un campo "hostid" anche in usage_forecast, aggiungilo qui
   hostid?: string;
 }
 
@@ -96,8 +97,8 @@ interface HealthMetric {
 // =============== CACHE LOCALE ===============
 interface UnitCache {
   allSystemRecords: SystemData[];   // Tutti i record system_data
-  allTelemetry: TelemetryData[];    // Tutta la telemetria (capacity_trends)
-  allForecast: ForecastPoint[];     // Tutte le previsioni (usage_forecast)
+  allTelemetry: TelemetryData[];     // Tutta la telemetria (capacity_trends)
+  allForecast: ForecastPoint[];      // Tutte le previsioni (usage_forecast)
   timestamp: number;
 }
 
@@ -188,7 +189,7 @@ function SystemDetail() {
           return;
         }
 
-        // Altrimenti fetch da Firestore
+        // Altrimenti fetch da Firestore per system_data
         const systemRef = collection(firestore, 'system_data');
         const systemQuery = query(systemRef, where('unit_id', '==', unitId));
         const snapshot = await getDocs(systemQuery);
@@ -251,7 +252,7 @@ function SystemDetail() {
           }
         }
 
-        // Scelgo un record col last_date più recente
+        // Scelgo un record col last_date più recente (per avere un riferimento iniziale)
         let latestRecord = loadedRecords[0];
         let maxTime = 0;
         for (const r of loadedRecords) {
@@ -263,9 +264,14 @@ function SystemDetail() {
         }
         const refHostid = latestRecord.hostid || '';
 
-        // Carico TUTTA la telemetria e TUTTO il forecast per quell’hostid (o per quell’unit_id, dipende da come è indicizzato)
-        // Per brevità, facciamo come in precedenza:
-        const telemQ = query(collection(firestore, 'capacity_trends'), where('hostid', '==', refHostid));
+        // Estrai i valori unici di hostid dalla system_data (utili per filtrare i dati nelle altre collezioni)
+        const uniqueHostids = Array.from(new Set(loadedRecords.map(r => r.hostid)));
+
+        // Carico TUTTA la telemetria dalla collezione capacity_trends usando l'operatore "in" sui hostid
+        const telemQ = query(
+          collection(firestore, 'capacity_trends'),
+          where('hostid', 'in', uniqueHostids)
+        );
         const telemSnap = await getDocs(telemQ);
         let allTelemetryData: TelemetryData[] = [];
         telemSnap.forEach((doc) => {
@@ -279,7 +285,6 @@ function SystemDetail() {
             perc_used: Number(td.perc_used),
             snap: Number(td.snap),
             perc_snap: Number(td.perc_snap),
-            // se hai hostid in doc, aggiungilo:
             hostid: td.hostid || ''
           });
         });
@@ -287,7 +292,11 @@ function SystemDetail() {
           .filter((t) => t.perc_used >= 0 && t.perc_used <= 100)
           .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
 
-        const foreQ = query(collection(firestore, 'usage_forecast'), where('hostid', '==', refHostid));
+        // Carico TUTTO il forecast dalla collezione usage_forecast usando l'operatore "in" sui hostid
+        const foreQ = query(
+          collection(firestore, 'usage_forecast'),
+          where('hostid', 'in', uniqueHostids)
+        );
         const foreSnap = await getDocs(foreQ);
         let allForecastData: ForecastPoint[] = [];
         foreSnap.forEach((doc) => {
@@ -298,7 +307,6 @@ function SystemDetail() {
             pool: fd.pool || '',
             forecasted_usage: Number(fd.forecasted_usage),
             forecasted_percentage: Number(fd.forecasted_percentage),
-            // se hai hostid in doc, aggiungilo:
             hostid: fd.hostid || ''
           });
         });
@@ -314,10 +322,11 @@ function SystemDetail() {
 
         setAllRecords(loadedRecords);
 
-        // costruiamo la lista pool
+        // Costruisco la lista delle pool
         const allPools = Array.from(new Set(loadedRecords.map((r) => r.pool)));
         setPoolList(allPools);
 
+        // Definisco la pool di default con l'ultimo last_date
         let defaultPool: string | null = null;
         let maxT2 = 0;
         for (const rec of loadedRecords) {
@@ -369,8 +378,7 @@ function SystemDetail() {
     const cached = unitCache[unitId];
     if (!cached) return;
 
-    // 3.1) Trovo TUTTI i record system_data che matchano pool+hostid
-    // (possono essercene più d'uno, con diversi periodi e last_date).
+    // 3.1) Trovo TUTTI i record system_data che matchano pool + hostid
     const relevantRecords = allRecords.filter(
       (r) => r.pool === selectedPool && r.hostid === selectedHostid
     );
@@ -379,42 +387,36 @@ function SystemDetail() {
       setStitchedTelemetry([]);
       return;
     }
-    // Ordino e prendo come "currentSystem" quello col last_date più recente
+    // Ordino e prendo il record con il last_date più recente come "currentSystem"
     relevantRecords.sort((a, b) => new Date(b.last_date).getTime() - new Date(a.last_date).getTime());
     const currentSystem = relevantRecords[0];
     setSystemData(currentSystem);
 
-    // 3.2) Costruisco un array “stitched” con i dati telemetrici (capacity_trends)
-    // per ognuno dei record validi (ciascuno definisce un intervallo [first_date, last_date]).
+    // 3.2) Costruisco un array “stitched” con i dati telemetrici per ciascun record (intervallo [first_date, last_date])
     let finalTelemetry: TelemetryData[] = [];
     for (const rec of relevantRecords) {
       const from = new Date(rec.first_date).getTime();
       const to = new Date(rec.last_date).getTime();
 
-      // Filtra “allTelemetry” (già in cache) dove:
-      // - pool === rec.pool
-      // - hostid (se presente) === rec.hostid
-      // - date in [first_date, last_date]
+      // Filtra i dati telemetrici in cache:
+      // - pool deve corrispondere
+      // - hostid deve corrispondere
+      // - la data deve trovarsi nell'intervallo [first_date, last_date]
       const sub = cached.allTelemetry.filter((t) => {
         if (t.pool !== rec.pool) return false;
-        // Se stai salvando "hostid" in telemetria, controlla:
-        // if (t.hostid !== rec.hostid) return false;
-
+        if (t.hostid !== rec.hostid) return false;
         const tDate = new Date(t.date).getTime();
         return tDate >= from && tDate <= to;
       });
       finalTelemetry.push(...sub);
     }
-    // Ordino i punti finali
     finalTelemetry.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
 
     setStitchedTelemetry(finalTelemetry);
 
-    // 3.3) Forecast (per semplicità filtri ancora su pool + hostid, SENZA stitching su first/last_date,
-    // ma se vuoi lo stesso “intervallo”, puoi replicare la logica come per Telemetry).
+    // 3.3) Forecast: filtra i record in base a pool e hostid
     const foreForHost = cached.allForecast.filter(
-      (f) => f.pool === selectedPool 
-      // e se hai f.hostid, filtra qui: && f.hostid === selectedHostid
+      (f) => f.pool === selectedPool && f.hostid === selectedHostid
     );
     foreForHost.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
     setForecastPoints(foreForHost);
@@ -564,7 +566,7 @@ function SystemDetail() {
   if (isLoading) {
     return (
       <div className="flex items-center justify-center h-[60vh]">
-        <div className="text-[#22c1d4] text-xl">Loading system data...</div>
+        <LoadingDots/>
       </div>
     );
   }
@@ -592,7 +594,7 @@ function SystemDetail() {
   const filteredTelemetry = getTimeRangeData<TelemetryData>(stitchedTelemetry, timeRange);
   const filteredForecast = getTimeRangeData<ForecastPoint>(forecastPoints, timeRange);
 
-  // Prendo i record per la pool selezionata (solo per mostrare la card di hostid)
+  // Prendo i record per la pool selezionata (per mostrare la card di hostid)
   const poolRecords = allRecords.filter((r) => r.pool === selectedPool);
   poolRecords.sort((a, b) => new Date(b.last_date).getTime() - new Date(a.last_date).getTime());
 
@@ -743,7 +745,7 @@ function SystemDetail() {
       <div className="flex justify-between items-center">
         <div className="flex items-center gap-4">
           <button
-            onClick={() => navigate('/systems')}
+            onClick={() => navigate(`/systems/company/${systemData.company}`)}
             className="p-2 hover:bg-[#0b3c43] rounded-full transition-colors"
           >
             <ArrowLeft className="w-6 h-6 text-[#22c1d4]" />
@@ -791,7 +793,7 @@ function SystemDetail() {
           HostID Overview
         </h2>
         <p className="text-[#eeeeee]/60 mb-4">
-        Click on a HostID to load data for that unit.
+          Click on a HostID to load data for that unit.
         </p>
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -804,7 +806,6 @@ function SystemDetail() {
                 onClick={() => setSelectedHostid(hRec.hostid)}
                 className="text-left"
                 style={{
-                  // Bordi: se è la card selezionata, bordo corallo
                   border: isSelected ? '2px solid#f8485e' : '1px solid rgba(34,193,212,0.2)',
                   background: '#06272b',
                   borderRadius: '0.5rem',
@@ -987,7 +988,6 @@ function SystemDetail() {
 
   // =============== RENDER FUNZIONI DI SUPPORTO ===============
   function renderHealthMetric(metric: HealthMetric, canAccess: boolean, shouldBlur: boolean) {
-    // Se utente non ha accesso e non abbiamo blur, non mostriamo nulla
     if (!canAccess && !shouldBlur) return null;
 
     const displayedValue = shouldBlur
