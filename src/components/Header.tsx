@@ -4,16 +4,13 @@ import { useAuth } from '../context/AuthContext';
 import {
   User,
   LogOut,
-  CheckCircle,
-  XCircle,
-  Loader2,
-  Users,
   Settings,
   HelpCircle,
   Info,
   UserPlus,
-  Shield
-} from 'lucide-react'; // Aggiunta l'icona Shield per Permissions
+  Shield,
+  Users
+} from 'lucide-react';
 import { FaFireAlt, FaStar, FaGem } from 'react-icons/fa';
 import storvixLogo from '../assets/images/STORViXTM_WHITE.png';
 import xLogo from '../assets/images/X_White.png';
@@ -23,11 +20,12 @@ export default function Header() {
   const navigate = useNavigate();
 
   const [showUserMenu, setShowUserMenu] = useState(false);
+  const [showManagementMenu, setShowManagementMenu] = useState(false);
   const [isUpdating, setIsUpdating] = useState(false);
   const [updateStatus, setUpdateStatus] = useState<'idle' | 'success' | 'error'>('idle');
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
 
-  // Stato per il pop-up demo
+  // State for the demo info popup
   const [showDemoInfo, setShowDemoInfo] = useState(false);
 
   const handleLogout = () => {
@@ -82,7 +80,7 @@ export default function Header() {
         min-h-[60px]
       "
     >
-      {/* Logo a sinistra */}
+      {/* Left side: Logo */}
       <div className="flex items-center gap-4 py-2">
         <img
           src={storvixLogo}
@@ -96,7 +94,7 @@ export default function Header() {
         />
       </div>
 
-      {/* Sezione centrale: messaggio demo */}
+      {/* Center: Demo message */}
       <div className="flex-1 flex justify-center">
         <span className="text-sm text-[#eeeeee]/80">
           You are using a demo version.{' '}
@@ -109,10 +107,8 @@ export default function Header() {
         </span>
       </div>
 
-      {/* Contenuti a destra */}
+      {/* Right side: User icon and menu */}
       <div className="flex items-center gap-4 py-2">
-
-        {/* Icona utente e menu */}
         <div className="relative">
           <div
             className="flex items-center gap-2 cursor-pointer hover:text-[#22c1d4]"
@@ -128,8 +124,60 @@ export default function Header() {
                   {user.username}
                 </div>
               )}
-              {/* Voce Sub-Accounts */}
-              {(user?.role === 'customer' || user?.role === 'admin') && (
+              {/* 
+                For "admin" users, display Management submenu (all three items),
+                For "customer" users, display only Sub-Accounts.
+                For "admin_employee" or "employee", no management section is shown.
+              */}
+              {user?.role === 'admin' && (
+                <div
+                  className="relative"
+                  onMouseEnter={() => setShowManagementMenu(true)}
+                  onMouseLeave={() => setShowManagementMenu(false)}
+                >
+                  <button
+                    className="flex items-center gap-2 w-full text-left px-4 py-2 hover:bg-[#22c1d4]/10 transition-colors"
+                  >
+                    <Users className="w-4 h-4 inline-block mr-2" />
+                    Management
+                  </button>
+                  {showManagementMenu && (
+                    <div className="absolute right-full top-0 mr-2 w-48 bg-[#0b3c43] rounded-lg shadow-lg py-1 z-20">
+                      <button
+                        onClick={() => {
+                          navigate('/customer/employees');
+                          setShowUserMenu(false);
+                        }}
+                        className="block w-full text-left px-4 py-2 hover:bg-[#22c1d4]/10 transition-colors"
+                      >
+                        <UserPlus className="w-4 h-4 inline-block mr-2" />
+                        Sub-Accounts
+                      </button>
+                      <button
+                        onClick={() => {
+                          navigate('/admin');
+                          setShowUserMenu(false);
+                        }}
+                        className="block w-full text-left px-4 py-2 hover:bg-[#22c1d4]/10 transition-colors"
+                      >
+                        <Users className="w-4 h-4 inline-block mr-2" />
+                        Accounts
+                      </button>
+                      <button
+                        onClick={() => {
+                          navigate('/subscription-permissions');
+                          setShowUserMenu(false);
+                        }}
+                        className="block w-full text-left px-4 py-2 hover:bg-[#22c1d4]/10 transition-colors"
+                      >
+                        <Shield className="w-4 h-4 inline-block mr-2" />
+                        Permissions
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+              {user?.role === 'customer' && (
                 <button
                   onClick={() => {
                     navigate('/customer/employees');
@@ -141,33 +189,9 @@ export default function Header() {
                   Sub-Accounts
                 </button>
               )}
-              {/* Voce Admin */}
-              {user?.role === 'admin' && (
-                <button
-                  onClick={() => {
-                    navigate('/admin');
-                    setShowUserMenu(false);
-                  }}
-                  className="block w-full text-left px-4 py-2 hover:bg-[#22c1d4]/10 transition-colors"
-                >
-                  <Users className="w-4 h-4 inline-block mr-2" />
-                  Admin
-                </button>
-              )}
-              {/* Voce Permissions con icona Shield */}
-              {user?.role === 'admin' && (
-                <button
-                  onClick={() => {
-                    navigate('/subscription-permissions');
-                    setShowUserMenu(false);
-                  }}
-                  className="block w-full text-left px-4 py-2 hover:bg-[#22c1d4]/10 transition-colors"
-                >
-                  <Shield className="w-4 h-4 inline-block mr-2" />
-                  Permissions
-                </button>
-              )}
-              {/* Voce Settings */}
+              {/* For "admin_employee" or "employee", the management section is not shown */}
+
+              {/* Settings */}
               <button
                 onClick={() => {
                   navigate('/settings');
@@ -178,7 +202,7 @@ export default function Header() {
                 <Settings className="w-4 h-4 inline-block mr-2" />
                 Settings
               </button>
-              {/* Voce Support */}
+              {/* Support */}
               <button
                 onClick={() => {
                   navigate('/support');
@@ -189,7 +213,7 @@ export default function Header() {
                 <HelpCircle className="w-4 h-4 inline-block mr-2" />
                 Support
               </button>
-              {/* Voce Sign Out */}
+              {/* Sign Out */}
               <button
                 onClick={handleLogout}
                 className="
@@ -209,7 +233,7 @@ export default function Header() {
         </div>
       </div>
 
-      {/* Pop-up Demo */}
+      {/* Demo Popup */}
       {showDemoInfo && (
         <div
           className="
@@ -217,13 +241,13 @@ export default function Header() {
             flex items-center justify-center
           "
         >
-          {/* Overlay scuro */}
+          {/* Dark overlay */}
           <div
             className="absolute inset-0 bg-black bg-opacity-50"
             onClick={() => setShowDemoInfo(false)}
           ></div>
 
-          {/* Box del pop-up */}
+          {/* Popup box */}
           <div className="relative bg-[#06272b] p-6 rounded-md shadow-md w-[90%] max-w-xl text-[#eeeeee]">
             <button
               className="absolute top-2 right-2 text-[#eeeeee]/50 hover:text-[#eeeeee]"
