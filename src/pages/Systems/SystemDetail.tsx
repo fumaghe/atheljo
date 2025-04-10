@@ -459,7 +459,7 @@ function SystemDetail() {
         rawValue: Number((100 - currentSystem.perc_used).toFixed(1)),
         unit: '%',
         status: capacityScore < 50 ? 'critical' : capacityScore < 70 ? 'warning' : 'good',
-        message: `${currentSystem.used} GB used of ${currentSystem.avail} GB total`,
+        message: `${(currentSystem.used / 1024).toFixed(2)} TB used of ${(((currentSystem.used + currentSystem.avail) / 1024).toFixed(2))} TB total`,
         impact: 'N/A',
         weight: 40,
         icon: Database
