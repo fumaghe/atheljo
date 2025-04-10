@@ -66,7 +66,7 @@ export default function Dashboard() {
         </div>
       ) : !aggregatedStats ? (
         <div className="flex items-center justify-center h-[60vh]">
-          <div className="text-[#f8485e] text-xl">No data available for the selected filters</div>
+          <LoadingDots />
         </div>
       ) : (
         <>
