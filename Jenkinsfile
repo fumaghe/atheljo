@@ -99,12 +99,18 @@ pipeline {
           expression { shouldBuild }
         }
       }
-      steps {
-        withCredentials([
-          file(credentialsId: 'BACKEND_ENV_SECRET', variable: 'BACKEND_ENV_PATH'),
-          file(credentialsId: 'ARCHIMEDES_ENV_SECRET', variable: 'ARCHIMEDES_ENV_PATH'),
-          file(credentialsId: 'FIRESTORE_CREDENTIALS_FILE', variable: 'FIRESTORE_CREDENTIALS_PATH')
-        ]) {
+      steps
+      {
+        withCredentials(
+          [
+            file(credentialsId: 'BACKEND_ENV_SECRET', variable: 'BACKEND_ENV_PATH'),
+            file(credentialsId: 'ARCHIMEDES_ENV_SECRET', variable: 'ARCHIMEDES_ENV_PATH'),
+            file(credentialsId: 'FIRESTORE_CREDENTIALS_FILE', variable: 'FIRESTORE_CREDENTIALS_PATH'),
+            file( credentialsId: 'avalon-staging-tls-crt', variable: 'AVALON_STAGING_TLS_CRT_FILE' ),
+            file( credentialsId: 'avalon-staging-tls-key', variable: 'AVALON_STAGING_TLS_KEY_FILE' ),
+          ]
+        )
+        {
           sh '''
             # Leggi il contenuto dei file dei secret per BACKEND e ARCHIMEDES
             export BACKEND_ENV="$(cat "$BACKEND_ENV_PATH")"
@@ -124,7 +130,10 @@ pipeline {
             
             # Scrive un file env.tmp per Docker Compose con le variabili
             printf "BACKEND_ENV=%s\nARCHIMEDES_ENV_B64=%s\nEMAIL_PASSWORD=%s\nEMAIL_USER=%s\n" "$BACKEND_ENV" "$ARCHIMEDES_ENV_B64" "$EMAIL_PASSWORD" "$EMAIL_USER" > env.tmp
-            
+
+            ln ${AVALON_STAGING_TLS_CRT_FILE} proxy-tls.crt.pem
+            ln ${AVALON_STAGING_TLS_KEY_FILE} proxy-tls.key.pem
+
             # Esegue il build per aggiornare solo i servizi modificati
             sudo docker compose -p avalon -f docker-compose.staging.yaml --env-file env.tmp build
             
@@ -151,8 +160,13 @@ pipeline {
   }
 
   post {
-    always {
-      script {
+    always
+    {
+      sh '''
+        rm proxy-tls.*.pem || true
+      '''
+      script
+      {
         devopsLibrary.wsCleanup(JOB_NAME, [ keepIndexingRuns: false, buildsToKeepThreshold: 15 ])
       }
     }
