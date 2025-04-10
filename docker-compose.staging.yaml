@@ -6,9 +6,6 @@ networks:
   avalon_backend:
     name: avalon_backend
 
-  traefik_avalon:
-    external: true
-
 
 services:
   backend:
@@ -43,16 +40,8 @@ services:
     dns: 127.0.0.11
     networks:
       - avalon_backend
-      - traefik_avalon
     ports:
-      - "3080:80"
+      - "80:80"
+      - "443:443"
     depends_on:
       - backend
-    labels:
-      - "traefik.enable=true"
-      - "traefik.docker.network=traefik_avalon"
-      - "traefik.http.routers.avalon-nginx.entrypoints=websecure"
-      - "traefik.http.routers.avalon-nginx.rule=Host(`avalon.staging.storvix.eu`)"
-      - "traefik.http.routers.avalon-nginx.tls=true"
-      - "traefik.http.routers.avalon-nginx.service=avalon-nginx"
-      - "traefik.http.services.avalon-nginx.loadbalancer.server.port=3080"
