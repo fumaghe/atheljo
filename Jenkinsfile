@@ -92,10 +92,6 @@ pipeline {
       }
     }
 
-        withCredentials(
-          [
-
-
     stage('Run containers for development') {
       when {
         allOf {
