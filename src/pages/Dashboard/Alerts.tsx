@@ -24,22 +24,35 @@ import {
 } from 'firebase/firestore';
 import firestore from '../../firebaseClient';
 
+/** Extended alert interface, now includes unit_id, company and pool */
 export interface Alert {
+  unit_id: string;
   hostid: string;
+  pool: string;
+  company: string;
   message: string;
   date: string;
-  type: 'forecast' | 'suddenIncrease' | 'suddenDecrease' | 'inactivity' | 'telemetryInactive' | 'highGrowth';
+  type:
+    | 'forecast'
+    | 'suddenIncrease'
+    | 'suddenDecrease'
+    | 'inactivity'
+    | 'telemetryInactive'
+    | 'highGrowth';
   importance: 'white' | 'blue' | 'red';
 }
 
+/** The system_data doc structure */
 interface SystemData {
+  unit_id: string;      // used to unify by (unit_id, hostid, pool)
   hostid: string;
+  pool: string;
   company: string;
   sending_telemetry: boolean;
   type?: string;
-  pool?: string;
 }
 
+/** The props for this Alerts component */
 interface AlertsProps {
   filters: {
     company: string;
@@ -50,15 +63,36 @@ interface AlertsProps {
   };
 }
 
-// Cache globale per gli alert (durata: 20 minuti)
-let cachedAlerts: Alert[] | null = null;
-let alertsCacheTimestamp: number | null = null;
-const ALERT_CACHE_DURATION = 20 * 60 * 1000;
+/** Any doc from 'analytics_forecast' might look like: */
+interface ForecastDoc {
+  hostid: string;
+  pool: string;
+  date: string;              // e.g. '2023-10-01T12:00:00'
+  perc_used?: string | number;
+  time_to_80?: string | number;
+  time_to_90?: string | number;
+  time_to_100?: string | number;
+  growth_rate?: string | number;
+}
+
+/** Any doc from 'capacity_trends' might look like: */
+interface CapacityDoc {
+  hostid: string;
+  pool: string;
+  date: string;              // e.g. '2023-10-01T12:00:00'
+  used?: number;
+  perc_used?: number;
+}
 
 const Alerts: React.FC<AlertsProps> = ({ filters }) => {
   const { user } = useAuth();
   const [alerts, setAlerts] = useState<Alert[]>([]);
   const [loading, setLoading] = useState(true);
+
+  /**
+   * We'll store system_data in a map keyed by: (hostid + "::" + pool)
+   * Because one hostid might appear in multiple pools, or multiple hostids for same unit.
+   */
   const [systemMap, setSystemMap] = useState<Map<string, SystemData>>(new Map());
 
   // Subscription permissions
@@ -67,240 +101,317 @@ const Alerts: React.FC<AlertsProps> = ({ filters }) => {
   const { canAccess: allAlertsLinkCanAccess, shouldBlur: allAlertsLinkShouldBlur } =
     useSubscriptionPermissions('Alerts', 'AllAlertsLink');
 
-  // Carica la mappa dei sistemi dalla collection "system_data"
+  // ==========================
+  // 1) LOAD system_data in a map keyed by (hostid + "::" + pool)
+  // ==========================
   useEffect(() => {
-    const loadSystemMap = async () => {
+    async function loadSystemMap() {
       try {
-        const querySnapshot = await getDocs(collection(firestore, 'system_data'));
+        const snap = await getDocs(collection(firestore, 'system_data'));
         const map = new Map<string, SystemData>();
-        querySnapshot.docs.forEach((doc: QueryDocumentSnapshot) => {
-          const sys = doc.data() as SystemData;
-          map.set(sys.hostid, {
-            hostid: sys.hostid,
-            company: sys.company,
+
+        snap.forEach((doc: QueryDocumentSnapshot) => {
+          const d = doc.data() as any; // we refine to SystemData below
+          const sys: SystemData = {
+            unit_id: d.unit_id || '',
+            hostid: d.hostid || '',
+            pool: d.pool || '',
+            company: d.company || '',
             sending_telemetry:
-              typeof sys.sending_telemetry === 'boolean'
-                ? sys.sending_telemetry
-                : String(sys.sending_telemetry).toLowerCase() === 'true',
-            type: sys.type,
-            pool: sys.pool
-          });
+              typeof d.sending_telemetry === 'boolean'
+                ? d.sending_telemetry
+                : String(d.sending_telemetry).toLowerCase() === 'true',
+            type: d.type
+          };
+          // The key is "hostid::pool"
+          const key = `${sys.hostid}::${sys.pool}`;
+          map.set(key, sys);
         });
         setSystemMap(map);
       } catch (error) {
         console.error('Error loading systems for alerts:', error);
       }
-    };
+    }
     loadSystemMap();
   }, []);
 
+  // ==========================
+  // 2) LOAD Alerts from forecast & capacity, generate list
+  // ==========================
   useEffect(() => {
-    const loadAlerts = async () => {
+    async function loadAlerts() {
       setLoading(true);
       try {
-        const forecastCollection = collection(firestore, 'analytics_forecast');
-        const capacityCollection = collection(firestore, 'capacity_trends');
+        // 2A) Build a list of "allowed" (hostid, pool) pairs based on user role & filters
+        const allowedKeys = new Set<string>();
 
-        // Applica i filtri: oltre a quelli impostati dall'utente,
-        // viene controllato l'accesso in base al ruolo e alle visibleCompanies.
-        const systems = Array.from(systemMap.values()).filter(sys => {
-          if (user) {
-            const isAdmin = user?.role === 'admin';
-            const isAdminEmployee = user?.role === 'admin_employee';
-            if (isAdmin) return true;
-            if (isAdminEmployee) {
-              return user.visibleCompanies?.includes('all') || user.visibleCompanies?.includes(sys.company);
+        // We'll iterate over systemMap entries
+        systemMap.forEach((sys, key) => {
+          if (!user) return; // if no user, skip
+
+          // Role checks
+          if (user.role === 'admin') {
+            // admin sees everything
+          } else if (user.role === 'admin_employee') {
+            // must be in visibleCompanies or 'all'
+            const vis = user.visibleCompanies || [];
+            if (vis.length > 0 && !vis.includes('all') && !vis.includes(sys.company)) {
+              return;
             }
-            // dipendente standard
-            return sys.company === user.company;
+          } else {
+            // normal employee
+            if (sys.company !== user.company) {
+              return;
+            }
           }
-          return false;
-        }).filter(sys => {
-          if (filters.company !== 'all' && sys.company !== filters.company) return false;
-          if (filters.type !== 'all' && sys.type !== filters.type) return false;
-          if (filters.pool !== 'all' && sys.pool !== filters.pool) return false;
+
+          // Filter by company, type, pool
+          if (filters.company !== 'all' && sys.company !== filters.company) {
+            return;
+          }
+          if (filters.type !== 'all' && sys.type !== filters.type) {
+            return;
+          }
+          if (filters.pool !== 'all' && sys.pool !== filters.pool) {
+            return;
+          }
+          // Telemetry filter
           if (filters.telemetry !== 'all') {
             const shouldBeActive = filters.telemetry === 'active';
-            if (sys.sending_telemetry !== shouldBeActive) return false;
+            if (sys.sending_telemetry !== shouldBeActive) return;
           }
-          return true;
+
+          allowedKeys.add(key); // e.g. 'hostid123::poolABC'
         });
 
-        const filteredHostIds = systems.map(sys => sys.hostid);
+        if (allowedKeys.size === 0) {
+          // No systems pass the filter => no alerts
+          setAlerts([]);
+          setLoading(false);
+          return;
+        }
 
-        // Limite temporale
+        // 2B) time range => gather docs only after the cutoff
         const days = parseInt(filters.timeRange);
-        const cutoffDate = subDays(new Date(), days).toISOString();
+        const cutoffISO = subDays(new Date(), days).toISOString();
 
-        // Query per analytics_forecast
-        const forecastQuery = query(
-          forecastCollection,
-          orderBy('date', 'desc'),
-          limit(100)
-        );
+        // 2C) load a small portion of 'analytics_forecast' & 'capacity_trends'
+        const forecastRef = collection(firestore, 'analytics_forecast');
+        const capacityRef = collection(firestore, 'capacity_trends');
 
-        // Query per capacity_trends
-        const capacityQuery = query(
-          capacityCollection,
-          orderBy('date', 'desc'),
-          limit(100)
-        );
-
-        const [forecastSnapshot, capacitySnapshot] = await Promise.all([
-          getDocs(forecastQuery),
-          getDocs(capacityQuery)
+        const [forecastSnap, capacitySnap] = await Promise.all([
+          getDocs(query(forecastRef, orderBy('date', 'desc'), limit(500))),
+          getDocs(query(capacityRef, orderBy('date', 'desc'), limit(500)))
         ]);
 
-        const forecastData = forecastSnapshot.docs
-          .map(doc => doc.data())
-          .filter(record => filteredHostIds.includes(record.hostid) && record.date >= cutoffDate);
+        // 2D) Filter them by (hostid+pool) in allowedKeys & date >= cutoff
+        const forecastData: ForecastDoc[] = [];
+        forecastSnap.forEach((doc) => {
+          const f = doc.data() as any; // refine to ForecastDoc
+          // Build the key
+          const key = `${f.hostid || ''}::${f.pool || ''}`;
+          if (allowedKeys.has(key) && f.date >= cutoffISO) {
+            forecastData.push(f);
+          }
+        });
 
-        const capacityData = capacitySnapshot.docs
-          .map(doc => doc.data())
-          .filter(record => filteredHostIds.includes(record.hostid) && record.date >= cutoffDate);
+        const capacityData: CapacityDoc[] = [];
+        capacitySnap.forEach((doc) => {
+          const c = doc.data() as any; // refine to CapacityDoc
+          const key = `${c.hostid || ''}::${c.pool || ''}`;
+          if (allowedKeys.has(key) && c.date >= cutoffISO) {
+            capacityData.push(c);
+          }
+        });
 
-        const alertList: Alert[] = [];
+        // 2E) Generate alerts
         const nowISO = new Date().toISOString();
+        const alertList: Alert[] = [];
 
-        // Genera alerts da forecast
-        forecastData.forEach(record => {
-          const percUsed = parseFloat(record.perc_used) || 0;
+        // Forecast-based
+        forecastData.forEach((rec) => {
+          const key = `${rec.hostid}::${rec.pool}`;
+          const sys = systemMap.get(key);
+          if (!sys) return; // skip if no system found
+          const unit_id = sys.unit_id || '';
+          const hostid = sys.hostid;
+          const pool = sys.pool;
+          const company = sys.company;
 
-          if (percUsed >= 80) {
+          const perc_used = Number(rec.perc_used ?? 0);
+          const t80 = Number(rec.time_to_80 ?? 9999);
+          const t90 = Number(rec.time_to_90 ?? 9999);
+          const t100 = Number(rec.time_to_100 ?? 9999);
+          const growth = Number(rec.growth_rate ?? 0);
+
+          // Already above 80% usage
+          if (perc_used >= 80) {
             alertList.push({
-              hostid: record.hostid,
-              message: `Already above 80% usage (currently ${percUsed.toFixed(1)}%).`,
+              unit_id,
+              hostid,
+              pool,
+              company,
+              message: `Already above 80% usage (currently ${perc_used.toFixed(1)}%).`,
               date: nowISO,
               type: 'forecast',
-              importance: percUsed >= 90 ? 'red' : 'blue'
+              importance: perc_used >= 90 ? 'red' : 'blue'
             });
           }
 
-          if (parseFloat(record.time_to_80) <= 30 && percUsed < 80) {
+          // time_to_80
+          if (t80 <= 30 && perc_used < 80) {
             alertList.push({
-              hostid: record.hostid,
-              message: `Expected to reach 80% usage in ${record.time_to_80} days.`,
+              unit_id,
+              hostid,
+              pool,
+              company,
+              message: `Expected to reach 80% usage in ${t80} days.`,
               date: nowISO,
               type: 'forecast',
               importance: 'white'
             });
           }
-
-          if (parseFloat(record.time_to_90) <= 30 && percUsed < 90) {
+          // time_to_90
+          if (t90 <= 30 && perc_used < 90) {
             alertList.push({
-              hostid: record.hostid,
-              message: `Expected to reach 90% usage in ${record.time_to_90} days.`,
+              unit_id,
+              hostid,
+              pool,
+              company,
+              message: `Expected to reach 90% usage in ${t90} days.`,
               date: nowISO,
               type: 'forecast',
               importance: 'blue'
             });
           }
-
-          if (parseFloat(record.time_to_100) <= 30) {
+          // time_to_100
+          if (t100 <= 30) {
             alertList.push({
-              hostid: record.hostid,
-              message: `Expected to reach 100% usage in ${record.time_to_100} days.`,
+              unit_id,
+              hostid,
+              pool,
+              company,
+              message: `Expected to reach 100% usage in ${t100} days.`,
               date: nowISO,
               type: 'forecast',
               importance: 'red'
             });
           }
 
-          if (parseFloat(record.growth_rate) > 3.0) {
+          // growth_rate
+          if (growth > 3.0) {
             alertList.push({
-              hostid: record.hostid,
-              message: `High growth rate detected: ${parseFloat(record.growth_rate).toFixed(1)}% per day.`,
+              unit_id,
+              hostid,
+              pool,
+              company,
+              message: `High growth rate: ${growth.toFixed(1)}% per day.`,
               date: nowISO,
               type: 'highGrowth',
-              importance: parseFloat(record.growth_rate) > 5 ? 'red' : 'blue'
+              importance: growth > 5 ? 'red' : 'blue'
             });
           }
         });
 
-        // Genera alerts da capacity trends
-        const groupedCapacity = capacityData.reduce((acc, curr) => {
-          if (!acc[curr.hostid]) acc[curr.hostid] = [];
-          acc[curr.hostid].push(curr);
-          return acc;
-        }, {} as Record<string, any[]>);
-
-        Object.values(groupedCapacity).forEach(records => {
-          records.sort((a: { date: string }, b: { date: string }) =>
-            new Date(b.date).getTime() - new Date(a.date).getTime()
-          );
-          if (records.length >= 2) {
-            const [last, secondLast] = records;
-            const diffUsed = parseFloat(last.perc_used) - parseFloat(secondLast.perc_used);
-            if (Math.abs(diffUsed) >= 5) {
+        // Capacity-based
+        // Group capacity docs by (hostid+pool)
+        const groupedCap: Record<string, CapacityDoc[]> = {};
+        capacityData.forEach((rec) => {
+          const key = `${rec.hostid}::${rec.pool}`;
+          if (!groupedCap[key]) groupedCap[key] = [];
+          groupedCap[key].push(rec);
+        });
+        Object.entries(groupedCap).forEach(([key, arr]) => {
+          // sort by date desc
+          arr.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+          // if 2+ docs exist, check sudden changes
+          if (arr.length >= 2) {
+            const [last, secondLast] = arr;
+            const lastPerc = Number(last.perc_used ?? 0);
+            const secondPerc = Number(secondLast.perc_used ?? 0);
+            const diff = lastPerc - secondPerc;
+            if (Math.abs(diff) >= 5) {
+              const sys = systemMap.get(key);
+              if (sys) {
+                alertList.push({
+                  unit_id: sys.unit_id,
+                  hostid: sys.hostid,
+                  pool: sys.pool,
+                  company: sys.company,
+                  message: `Sudden ${diff > 0 ? 'increase' : 'decrease'} in used%: ${diff.toFixed(1)}%`,
+                  date: last.date,
+                  type: diff > 0 ? 'suddenIncrease' : 'suddenDecrease',
+                  importance: Math.abs(diff) >= 10 ? 'red' : 'blue'
+                });
+              }
+            }
+          }
+          // inactivity => check if last doc is older than 24h
+          const hoursSinceLast = (Date.now() - new Date(arr[0].date).getTime()) / 36e5;
+          if (hoursSinceLast >= 24) {
+            const sys = systemMap.get(key);
+            if (sys) {
               alertList.push({
-                hostid: last.hostid,
-                message: `Sudden ${diffUsed > 0 ? 'increase' : 'decrease'} in used percentage: ${diffUsed.toFixed(1)}%`,
-                date: last.date,
-                type: diffUsed > 0 ? 'suddenIncrease' : 'suddenDecrease',
-                importance: Math.abs(diffUsed) >= 10 ? 'red' : 'blue'
+                unit_id: sys.unit_id,
+                hostid: sys.hostid,
+                pool: sys.pool,
+                company: sys.company,
+                message: `No capacity update in the last ${Math.floor(hoursSinceLast)} hours.`,
+                date: arr[0].date,
+                type: 'inactivity',
+                importance: hoursSinceLast >= 48 ? 'red' : 'blue'
               });
             }
           }
-
-          // Inactivity Alert
-          const hoursSinceUpdate = (new Date().getTime() - new Date(records[0].date).getTime()) / (1000 * 60 * 60);
-          if (hoursSinceUpdate >= 24) {
-            alertList.push({
-              hostid: records[0].hostid,
-              message: `No capacity update received in the last ${Math.floor(hoursSinceUpdate)} hours.`,
-              date: records[0].date,
-              type: 'inactivity',
-              importance: hoursSinceUpdate >= 48 ? 'red' : 'blue'
-            });
-          }
         });
 
-        // Telemetry inactive alerts
-        systems.forEach(sys => {
-          if (!sys.sending_telemetry) {
+        // Telemetry inactive
+        // We already know which keys are allowed => check if sysMap says sending_telemetry is false
+        allowedKeys.forEach((key) => {
+          const sys = systemMap.get(key);
+          if (sys && !sys.sending_telemetry) {
             alertList.push({
+              unit_id: sys.unit_id,
               hostid: sys.hostid,
+              pool: sys.pool,
+              company: sys.company,
               message: 'Telemetry inactive: system not sending data.',
-              date: nowISO,
+              date: new Date().toISOString(),
               type: 'telemetryInactive',
               importance: 'red'
             });
           }
         });
 
-        // Ordina gli alert per data e mostra solo i 4 più recenti
+        // 2F) Sort + limit to 4 newest
         alertList.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
         setAlerts(alertList.slice(0, 4));
-
-      } catch (error) {
-        console.error('Error loading alerts:', error);
+      } catch (err) {
+        console.error('Error building alerts:', err);
       } finally {
         setLoading(false);
       }
-    };
+    }
 
     loadAlerts();
   }, [user, filters, systemMap]);
 
-  const getAlertIcon = (type: string) => {
+  // For the alert icon
+  function getAlertIcon(type: string) {
     switch (type) {
-      case 'forecast':
-        return <Calendar className="w-4 h-4" />;
-      case 'suddenIncrease':
-        return <TrendingUp className="w-4 h-4" />;
-      case 'suddenDecrease':
-        return <TrendingDown className="w-4 h-4" />;
-      case 'inactivity':
-        return <AlertTriangle className="w-4 h-4" />;
-      case 'telemetryInactive':
-        return <XCircle className="w-4 h-4" />;
-      case 'highGrowth':
-        return <Activity className="w-4 h-4" />;
-      default:
-        return <Calendar className="w-4 h-4" />;
+      case 'forecast':          return <Calendar className="w-4 h-4" />;
+      case 'suddenIncrease':    return <TrendingUp className="w-4 h-4" />;
+      case 'suddenDecrease':    return <TrendingDown className="w-4 h-4" />;
+      case 'inactivity':        return <AlertTriangle className="w-4 h-4" />;
+      case 'telemetryInactive': return <XCircle className="w-4 h-4" />;
+      case 'highGrowth':        return <Activity className="w-4 h-4" />;
+      default:                  return <AlertCircle className="w-4 h-4" />;
     }
-  };
+  }
 
+  // ==========================
+  // RENDER
+  // ==========================
   return (
     <div className="bg-[#0b3c43] rounded-lg p-3 shadow-lg my-4">
       <h2 className="text-lg font-semibold mb-3 text-[#f8485e] flex items-center gap-2">
@@ -315,30 +426,33 @@ const Alerts: React.FC<AlertsProps> = ({ filters }) => {
       ) : (
         (alertsListCanAccess || alertsListShouldBlur) && (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 relative">
-            {alerts.map((alert, index) => {
+            {alerts.map((alert, idx) => {
               if (alertsListShouldBlur) {
+                // Show blurred
                 return (
-                  <div key={`${alert.hostid}-${index}`} className="relative">
-                    <div className={`p-3 h-16 bg-[#06272b] rounded-lg flex flex-col gap-2 border-2 ${
-                      alert.importance === 'red'
-                        ? 'border-[#f8485e]'
-                        : alert.importance === 'blue'
-                        ? 'border-[#22c1d4]'
-                        : 'border-[#ffffff]'
-                    } blur-sm pointer-events-none`}>
-                    </div>
+                  <div key={`${alert.hostid}-${alert.pool}-${idx}`} className="relative">
+                    <div
+                      className={`p-3 h-16 bg-[#06272b] rounded-lg flex flex-col gap-2 border-2 ${
+                        alert.importance === 'red'
+                          ? 'border-[#f8485e]'
+                          : alert.importance === 'blue'
+                          ? 'border-[#22c1d4]'
+                          : 'border-[#ffffff]'
+                      } blur-sm pointer-events-none`}
+                    ></div>
                     <div className="absolute inset-0 z-10 flex flex-col items-center justify-center">
-                      <Lock className="w-5 h-5 text-white mb-2" />
+                      <Lock className="w-5 h-5 text-white mb-1" />
                       <span className="text-[0.7rem] text-white">
-                        Upgrade your subscription to see this Alert
+                        Upgrade to see this Alert
                       </span>
                     </div>
                   </div>
                 );
               } else {
+                // Show normal
                 return (
                   <div
-                    key={`${alert.hostid}-${index}`}
+                    key={`${alert.hostid}-${alert.pool}-${idx}`}
                     className={`p-3 bg-[#06272b] rounded-lg flex flex-col gap-2 border-2 ${
                       alert.importance === 'red'
                         ? 'border-[#f8485e]'
@@ -348,17 +462,20 @@ const Alerts: React.FC<AlertsProps> = ({ filters }) => {
                     }`}
                   >
                     <div className="flex items-center justify-between">
-                      <div className="flex flex-col">
-                        <span className="text-base font-bold text-[#eeeeee]">{alert.hostid}</span>
-                        {systemMap.get(alert.hostid) && (
-                          <span className="text-[0.65rem] text-[#eeeeee] opacity-80">
-                            {systemMap.get(alert.hostid)?.company}
-                          </span>
-                        )}
+                      {/* Mostriamo unit_id - hostid in alto */}
+                      <div className="flex flex-col text-xs leading-tight text-[#eeeeee]">
+                        <span className="font-bold">
+                          {alert.unit_id} - {alert.hostid}
+                        </span>
+                        <span className="opacity-75">
+                          Company: {alert.company || 'N/A'}
+                        </span>
                       </div>
                       {getAlertIcon(alert.type)}
                     </div>
-                    <p className="text-xs text-[#eeeeee]">{alert.message}</p>
+                    <p className="text-xs text-[#eeeeee]">
+                      {alert.message}
+                    </p>
                     <span className="text-[0.65rem] text-[#eeeeee]/60">
                       {format(new Date(alert.date), 'MMM dd, yyyy')}
                     </span>
@@ -371,7 +488,11 @@ const Alerts: React.FC<AlertsProps> = ({ filters }) => {
       )}
 
       {(user?.role === 'admin' || allAlertsLinkCanAccess) && (
-        <div className={`mt-3 text-right ${allAlertsLinkShouldBlur ? 'blur-sm pointer-events-none' : ''}`}>
+        <div
+          className={`mt-3 text-right ${
+            allAlertsLinkShouldBlur ? 'blur-sm pointer-events-none' : ''
+          }`}
+        >
           <Link to="/alerts" className="text-xs text-[#22c1d4] hover:underline">
             View all alerts →
           </Link>
