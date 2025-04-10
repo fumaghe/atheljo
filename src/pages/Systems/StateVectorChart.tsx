@@ -1,3 +1,4 @@
+// src/components/charts/StateVectorChart.tsx
 import React, { useEffect, useState } from 'react';
 import { collection, query, where, getDocs } from 'firebase/firestore';
 import firestore from '../../firebaseClient';
@@ -14,7 +15,7 @@ import {
   LineElement,
   ScriptableLineSegmentContext,
 } from 'chart.js';
-import 'chartjs-adapter-date-fns'; // Importa l'adapter per le date
+import 'chartjs-adapter-date-fns';
 import {
   CandlestickController,
   CandlestickElement,
@@ -22,7 +23,6 @@ import {
 
 import { Line } from 'react-chartjs-2';
 import { Chart } from 'react-chartjs-2';
-
 import { parse, format, isValid, startOfWeek } from 'date-fns';
 
 ChartJS.register(
@@ -60,10 +60,13 @@ export interface CandlestickData {
 
 type Unit = 'GB' | 'GiB' | 'TB';
 
-const StateVectorChart: React.FC<{ hostId: string; pool: string }> = ({
-  hostId,
-  pool,
-}) => {
+interface StateVectorChartProps {
+  unitId: string; // Non viene più usato per filtrare il recupero dei dati, ma può essere conservato per riferimento
+  pool: string;
+  hostId: string;
+}
+
+const StateVectorChart: React.FC<StateVectorChartProps> = ({ unitId, pool, hostId }) => {
   const [data, setData] = useState<StateVectorData[]>([]);
   const [timeRange, setTimeRange] = useState('6m');
   const [chartType, setChartType] = useState<'candlestick' | 'line'>('candlestick');
@@ -71,7 +74,7 @@ const StateVectorChart: React.FC<{ hostId: string; pool: string }> = ({
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Conversione da GB a [GB/GiB/TB]
+  // Funzione di conversione da GB
   const convertFromGB = (valueInGB: number, targetUnit: Unit) => {
     switch (targetUnit) {
       case 'GB':
@@ -111,12 +114,11 @@ const StateVectorChart: React.FC<{ hostId: string; pool: string }> = ({
     return allData.filter(d => d.timestamp >= cutoff);
   };
 
-  // Raggruppa i dati per settimana
+  // Raggruppa i dati per settimana per il grafico candlestick
   const groupDataByWeek = (dataset: StateVectorData[], unit: Unit) => {
     const groups: Record<string, StateVectorData[]> = {};
 
     for (const item of dataset) {
-      // Calcola l'inizio della settimana (settimana che inizia di lunedì)
       const weekStart = startOfWeek(item.timestamp, { weekStartsOn: 1 });
       const weekKey = format(weekStart, 'yyyy-MM-dd');
       if (!groups[weekKey]) groups[weekKey] = [];
@@ -125,7 +127,6 @@ const StateVectorChart: React.FC<{ hostId: string; pool: string }> = ({
 
     const candlestickData: CandlestickData[] = Object.keys(groups).map(weekKey => {
       const group = groups[weekKey];
-      // Ordina per timestamp
       group.sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
 
       const openGB = group[0].used_gb;
@@ -142,28 +143,33 @@ const StateVectorChart: React.FC<{ hostId: string; pool: string }> = ({
       };
     });
 
-    // Ordina per data
     candlestickData.sort((a, b) => a.x.getTime() - b.x.getTime());
     return candlestickData;
   };
 
   useEffect(() => {
+    // Log dei parametri per verificare che siano corretti
+    console.log("Params:", { unitId, pool, hostId });
+    
     const fetchData = async () => {
       setIsLoading(true);
       try {
+        // Query aggiornata: filtriamo per pool e hostid (non usiamo più unit_id per recuperare i dati)
         const q = query(
           collection(firestore, 'capacity_trends'),
-          where('hostid', '==', hostId),
-          where('pool', '==', pool)
+          where('pool', '==', pool),
+          where('hostid', '==', hostId)
         );
         const snap = await getDocs(q);
         const rawData: StateVectorData[] = [];
 
+        // Log per verificare la quantità di documenti trovati
+        console.log("Documenti trovati:", snap.size);
         snap.forEach(doc => {
           const d = doc.data() as RawData;
           const dateObj = parse(d.date, 'yyyy-MM-dd HH:mm:ss', new Date());
           if (!isValid(dateObj)) {
-            console.warn('Data invalida:', d.date);
+            console.warn('Invalid date:', d.date);
             return;
           }
           rawData.push({
@@ -176,15 +182,15 @@ const StateVectorChart: React.FC<{ hostId: string; pool: string }> = ({
 
         rawData.sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
 
+        // Calcolo increment_gb per ogni record (escluso il primo)
         for (let i = 1; i < rawData.length; i++) {
           rawData[i].increment_gb = rawData[i].used_gb - rawData[i - 1].used_gb;
         }
 
         const filtered = filterDataByTimeRange(rawData, timeRange);
+        console.log("Final records after parsing and filtering:", filtered);
         setData(filtered);
         setIsLoading(false);
-
-        console.log('Record finali dopo parse e filtro:', filtered);
       } catch (err) {
         console.error(err);
         setError('Failed to load state vector data.');
@@ -193,9 +199,9 @@ const StateVectorChart: React.FC<{ hostId: string; pool: string }> = ({
     };
 
     fetchData();
-  }, [hostId, pool, timeRange]);
+  }, [unitId, pool, hostId, timeRange]);
 
-  // Dati per il line chart: ora utilizziamo oggetti { x, y } per sfruttare il time scale
+  // Dati per il grafico lineare (incremento di GB)
   const lineChartData = {
     datasets: [
       {
@@ -204,7 +210,6 @@ const StateVectorChart: React.FC<{ hostId: string; pool: string }> = ({
           x: d.timestamp,
           y: convertFromGB(d.increment_gb, unit)
         })),
-        // Imposta la linea senza punti
         pointRadius: 0,
         tension: 0.2,
         fill: false,
@@ -226,7 +231,6 @@ const StateVectorChart: React.FC<{ hostId: string; pool: string }> = ({
       x: {
         type: 'time',
         time: {
-          // Imposta l'unità in mesi con formato "Mar 2025"
           unit: 'month',
           displayFormats: {
             month: 'MMM yyyy'
@@ -240,7 +244,7 @@ const StateVectorChart: React.FC<{ hostId: string; pool: string }> = ({
         grid: { color: 'rgba(255,255,255,0.2)' },
         ticks: {
           color: '#ffffff',
-          callback: val => `${val}`,
+          callback: val => `${val}`
         },
       },
     },
@@ -256,9 +260,8 @@ const StateVectorChart: React.FC<{ hostId: string; pool: string }> = ({
     },
   };
 
-  // Dati per il candlestick (raggruppamento settimanale)
+  // Dati per il grafico candlestick: raggruppati per settimana
   const candlestickData = groupDataByWeek(data, unit);
-
   const candlestickChartOptions: ChartOptions<'candlestick'> = {
     responsive: true,
     maintainAspectRatio: false,
@@ -268,7 +271,7 @@ const StateVectorChart: React.FC<{ hostId: string; pool: string }> = ({
         time: {
           unit: 'week',
           displayFormats: {
-            week: 'MMM dd', // es. "Mar 01"
+            week: 'MMM dd',
           },
         },
         offset: true,
@@ -290,7 +293,6 @@ const StateVectorChart: React.FC<{ hostId: string; pool: string }> = ({
         titleColor: '#eeeeee',
         bodyColor: '#eeeeee',
         callbacks: {
-          // Tooltip per il grafico a candele (valori arrotondati a due decimali)
           label: function(context) {
             const dataPoint = context.raw as CandlestickData;
             const variation = (dataPoint.c - dataPoint.o).toFixed(2);
@@ -301,7 +303,6 @@ const StateVectorChart: React.FC<{ hostId: string; pool: string }> = ({
     },
   };
 
-  // Impostazioni per il grafico a candele
   const candlestickChartData = {
     datasets: [
       {
@@ -336,9 +337,7 @@ const StateVectorChart: React.FC<{ hostId: string; pool: string }> = ({
 
           <select
             value={chartType}
-            onChange={(e) =>
-              setChartType(e.target.value as 'candlestick' | 'line')
-            }
+            onChange={(e) => setChartType(e.target.value as 'candlestick' | 'line')}
             className="bg-[#0b3c43] text-[#eeeeee] rounded px-3 py-1 border border-[#22c1d4]/20"
           >
             <option value="line">Line Plot</option>

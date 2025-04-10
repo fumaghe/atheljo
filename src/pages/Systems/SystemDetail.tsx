@@ -25,6 +25,7 @@ import firestore from '../../firebaseClient';
 import { collection, query, where, getDocs } from 'firebase/firestore';
 import { useSubscriptionPermissions } from '../../hooks/useSubscriptionPermissions';
 import { useAuth } from '../../context/AuthContext';
+import StateVectorChart from './StateVectorChart';
 import LoadingDots from '../Dashboard/components/LoadingDots';
 import { calculateSystemHealthScore } from '../../utils/calculateSystemHealthScore';
 
@@ -921,7 +922,14 @@ function SystemDetail() {
           <Activity className="w-6 h-6 text-[#22c1d4]" />
           <h2 className="text-xl text-[#f8485e] font-semibold">Behaviour Analysis</h2>
         </div>
-        <p className="text-[#eeeeee]/60 italic">State Vector Analysis chart placeholder</p>
+        {/* Integrazione del componente StateVectorChart con il nuovo prop hostId */}
+        {systemData && (
+          <StateVectorChart
+            unitId={systemData.unit_id}
+            pool={systemData.pool}
+            hostId={systemData.hostid} // aggiunto qui il parametro hostId
+          />
+        )}
       </div>
 
       {/* CHART - UsageHistory */}
