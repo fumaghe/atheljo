@@ -77,7 +77,7 @@ export default function CompanyDetail() {
   const [filters, setFilters] = useState({
     type: 'all',
     status: 'all',
-    telemetry: 'all'
+    telemetry: 'active'
   });
   const [searchTerm, setSearchTerm] = useState('');
 

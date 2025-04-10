@@ -1,4 +1,5 @@
 // src/pages/Systems/Companies.tsx
+
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -13,17 +14,22 @@ import {
   Signal,
   Search,
 } from 'lucide-react';
-import { collection, getDocs, QueryDocumentSnapshot } from 'firebase/firestore';
+import {
+  collection,
+  getDocs,
+  QueryDocumentSnapshot,
+  query,
+} from 'firebase/firestore';
 import firestore from '../../firebaseClient';
 import { useAuth } from '../../context/AuthContext';
 import { useSubscriptionPermissions } from '../../hooks/useSubscriptionPermissions';
-// Importa la funzione centralizzata
 import { calculateSystemHealthScore } from '../../utils/calculateSystemHealthScore';
 
 interface SystemData {
   name: string;
   hostid: string;
   pool: string;
+  unit_id: string;
   type: string;
   used: number;
   avail: number;
@@ -39,6 +45,11 @@ interface SystemData {
   company: string;
 }
 
+interface AggregatedSystem extends SystemData {
+  pools: string[];
+  count: number;
+}
+
 interface CompanyStats {
   name: string;
   systemCount: number;
@@ -51,26 +62,36 @@ interface CompanyStats {
   warningCount: number;
   criticalCount: number;
   telemetryActive: number;
-  systems: SystemData[];
+  systems: AggregatedSystem[];
   versions: { [key: string]: number };
 }
 
 let cachedCompaniesData: CompanyStats[] | null = null;
 let companiesCacheTimestamp: number | null = null;
-const COMPANIES_CACHE_DURATION = 20 * 60 * 1000;
+const COMPANIES_CACHE_DURATION = 20 * 60 * 1000; // 20 minutes
 
 export default function Companies() {
   const navigate = useNavigate();
   const { user } = useAuth();
+
   const [companies, setCompanies] = useState<CompanyStats[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [searchTerm, setSearchTerm] = useState('');
+
+  // We'll store all version types found so we can populate the <select> dynamically
+  const [allVersions, setAllVersions] = useState<string[]>([]);
+
+  // Add "telemetry" field to the filters
   const [filters, setFilters] = useState({
     status: 'all',
     version: 'all',
+    telemetry: 'onlyActive', // "all" | "onlyActive"
+    searchTerm: '',
   });
 
+  /**
+   * Subscription/permissions for System Health Score
+   */
   const { canAccess: healthCanAccess, shouldBlur: healthShouldBlur } =
     useSubscriptionPermissions('Companies', 'System Health Score');
 
@@ -79,65 +100,158 @@ export default function Companies() {
       try {
         setIsLoading(true);
         setError(null);
-        const now = Date.now();
-        let companyStats: CompanyStats[] = [];
 
-        // Se esiste una cache valida, usala
+        const now = Date.now();
+        let companyStatsList: CompanyStats[] = [];
+
+        /** Check the cache first */
         if (
           companiesCacheTimestamp &&
           now - companiesCacheTimestamp < COMPANIES_CACHE_DURATION &&
           cachedCompaniesData
         ) {
-          companyStats = cachedCompaniesData;
+          companyStatsList = cachedCompaniesData;
         } else {
-          // Altrimenti, carica i dati dalla collection "system_data"
-          const snapshot = await getDocs(collection(firestore, 'system_data'));
-          const data = snapshot.docs.map((doc: QueryDocumentSnapshot) => doc.data()) as SystemData[];
+          // Load from Firestore
+          const systemDataRef = collection(firestore, 'system_data');
+          const qAll = query(systemDataRef);
 
-          // Raggruppa i sistemi per azienda
-          const companyMap = new Map<string, SystemData[]>();
-          data.forEach((system) => {
-            const parsedSystem: SystemData = {
-              ...system,
-              used: Number(system.used),
-              avail: Number(system.avail),
-              used_snap: Number(system.used_snap),
-              perc_used: Number(system.perc_used),
-              perc_snap: Number(system.perc_snap),
-              MUP: Number(system.MUP),
-              avg_speed: Number(system.avg_speed),
-              avg_time: Number(system.avg_time),
-              sending_telemetry: String(system.sending_telemetry).toLowerCase() === 'true',
-            };
-            if (!companyMap.has(parsedSystem.company)) {
-              companyMap.set(parsedSystem.company, []);
+          const snapshot = await getDocs(qAll);
+          const rawData = snapshot.docs.map((doc: QueryDocumentSnapshot) =>
+            doc.data()
+          ) as SystemData[];
+
+          const byCompany: Record<string, SystemData[]> = {};
+          // Normalize numeric/boolean fields
+          for (const item of rawData) {
+            item.used = Number(item.used);
+            item.avail = Number(item.avail);
+            item.used_snap = Number(item.used_snap);
+            item.perc_used = Number(item.perc_used);
+            item.perc_snap = Number(item.perc_snap);
+            item.MUP = Number(item.MUP);
+            item.avg_speed = Number(item.avg_speed);
+            item.avg_time = Number(item.avg_time);
+            item.sending_telemetry =
+              String(item.sending_telemetry).toLowerCase() === 'true';
+
+            if (!byCompany[item.company]) {
+              byCompany[item.company] = [];
             }
-            companyMap.get(parsedSystem.company)!.push(parsedSystem);
-          });
+            byCompany[item.company].push(item);
+          }
 
-          companyStats = Array.from(companyMap.entries()).map(([name, systems]) => {
-            const uniquePools = new Set(systems.map(s => s.pool)).size;
-            const totalCapacity = systems.reduce((sum, s) => sum + s.used + s.avail, 0);
-            const usedCapacity = systems.reduce((sum, s) => sum + s.used, 0);
-            const avgUsage = systems.reduce((sum, s) => sum + s.perc_used, 0) / systems.length;
+          const nowDate = new Date();
+          const cutoff = new Date(nowDate);
+          cutoff.setMonth(nowDate.getMonth() - 1); // 1 month ago
 
-            const healthScores = systems.map(s => calculateSystemHealthScore(s));
-            const avgHealthScore = healthScores.reduce((acc, score) => acc + score, 0) / systems.length;
-            const healthyCount = healthScores.filter(score => score >= 80).length;
-            const warningCount = healthScores.filter(score => score >= 50 && score < 80).length;
-            const criticalCount = healthScores.filter(score => score < 50).length;
+          const newCompanyStatsList: CompanyStats[] = [];
 
-            const telemetryActive = systems.filter(s => s.sending_telemetry).length;
-            const versions = systems.reduce((acc, sys) => {
+          // Group each company's data by unit_id -> pool
+          for (const [companyName, systemsOfCompany] of Object.entries(
+            byCompany
+          )) {
+            const unitGroups: Record<
+              string,
+              Record<string, SystemData>
+            > = {};
+
+            for (const sys of systemsOfCompany) {
+              if (!unitGroups[sys.unit_id]) {
+                unitGroups[sys.unit_id] = {};
+              }
+              const existing = unitGroups[sys.unit_id][sys.pool];
+              if (!existing) {
+                unitGroups[sys.unit_id][sys.pool] = sys;
+              } else {
+                const currentLastDate = new Date(sys.last_date);
+                const existingLastDate = new Date(existing.last_date);
+                if (currentLastDate > existingLastDate) {
+                  unitGroups[sys.unit_id][sys.pool] = sys;
+                }
+              }
+            }
+
+            const aggregatedSystems: AggregatedSystem[] = [];
+            for (const [unitId, poolMap] of Object.entries(unitGroups)) {
+              const poolRecords = Object.values(poolMap);
+              let validPoolRecords = poolRecords.filter(
+                (rec) => new Date(rec.last_date) >= cutoff
+              );
+              if (validPoolRecords.length === 0) {
+                validPoolRecords = poolRecords; // fallback
+              }
+              if (validPoolRecords.length === 1) {
+                const record = validPoolRecords[0];
+                aggregatedSystems.push({
+                  ...record,
+                  pools: [record.pool],
+                  count: 1,
+                });
+              } else {
+                // pick the doc with the LATEST last_date
+                const representative = validPoolRecords.reduce((prev, curr) =>
+                  new Date(prev.last_date) > new Date(curr.last_date)
+                    ? prev
+                    : curr
+                );
+                aggregatedSystems.push({
+                  ...representative,
+                  pools: [representative.pool],
+                  count: validPoolRecords.length,
+                });
+              }
+            }
+
+            // Summary stats
+            const totalCapacity = aggregatedSystems.reduce(
+              (sum, s) => sum + s.used + s.avail,
+              0
+            );
+            const usedCapacity = aggregatedSystems.reduce(
+              (sum, s) => sum + s.used,
+              0
+            );
+            const avgUsage =
+              aggregatedSystems.reduce((sum, s) => sum + s.perc_used, 0) /
+              (aggregatedSystems.length || 1);
+
+            const healthScores = aggregatedSystems.map((s) =>
+              calculateSystemHealthScore(s)
+            );
+            const avgHealthScore =
+              healthScores.reduce((acc, score) => acc + score, 0) /
+              (healthScores.length || 1);
+            const healthyCount = healthScores.filter((score) => score >= 80)
+              .length;
+            const warningCount = healthScores.filter(
+              (score) => score >= 50 && score < 80
+            ).length;
+            const criticalCount = healthScores.filter((score) => score < 50)
+              .length;
+
+            const telemetryActive = aggregatedSystems.filter(
+              (s) => s.sending_telemetry
+            ).length;
+
+            // Distinct pools
+            const poolSet = new Set<string>();
+            aggregatedSystems.forEach((sys) => {
+              sys.pools.forEach((p) => poolSet.add(p));
+            });
+            const poolCount = poolSet.size;
+
+            // Collect versions from aggregated systems
+            const versions = aggregatedSystems.reduce((acc, sys) => {
               const version = sys.type;
               acc[version] = (acc[version] || 0) + 1;
               return acc;
             }, {} as { [key: string]: number });
 
-            return {
-              name,
-              systemCount: systems.length,
-              poolCount: uniquePools,
+            const stats: CompanyStats = {
+              name: companyName,
+              systemCount: aggregatedSystems.length,
+              poolCount,
               totalCapacity,
               usedCapacity,
               avgUsage,
@@ -146,29 +260,47 @@ export default function Companies() {
               warningCount,
               criticalCount,
               telemetryActive,
-              systems,
+              systems: aggregatedSystems,
               versions,
-            } as CompanyStats;
-          });
+            };
+            newCompanyStatsList.push(stats);
+          }
 
           companiesCacheTimestamp = now;
-          cachedCompaniesData = companyStats;
+          cachedCompaniesData = newCompanyStatsList;
+          companyStatsList = newCompanyStatsList;
         }
 
-        // Se l'utente non è admin, filtra per azienda
+        // Filter out companies user isn't allowed to see
         if (user) {
           if (user.role === 'admin_employee') {
-            if (user.visibleCompanies && !user.visibleCompanies.includes('all')) {
-              companyStats = companyStats.filter((stat) => user.visibleCompanies!.includes(stat.name));
+            if (
+              user.visibleCompanies &&
+              !user.visibleCompanies.includes('all')
+            ) {
+              companyStatsList = companyStatsList.filter((stat) =>
+                user.visibleCompanies!.includes(stat.name)
+              );
             }
-            // se 'all' è incluso non filtra, altrimenti mostra solo le aziende assegnate
           } else if (user.role !== 'admin') {
-            // dipendenti normali vedono solo la loro azienda
-            companyStats = companyStats.filter((stat) => stat.name === user.company);
+            // Normal employee can see only their own company
+            companyStatsList = companyStatsList.filter(
+              (stat) => stat.name === user.company
+            );
           }
         }
 
-        setCompanies(companyStats);
+        // We now have final companyStatsList for the user
+        setCompanies(companyStatsList);
+
+        // Build a dynamic list of all version types
+        const versionSet = new Set<string>();
+        for (const c of companyStatsList) {
+          for (const v of Object.keys(c.versions)) {
+            versionSet.add(v);
+          }
+        }
+        setAllVersions(Array.from(versionSet).sort());
       } catch (error) {
         console.error('Error loading systems:', error);
         setError('Failed to load systems data');
@@ -180,21 +312,51 @@ export default function Companies() {
     loadSystems();
   }, [user]);
 
+  /**
+   * Filter the final array of companies
+   */
   const filteredCompanies = companies.filter((company) => {
-    if (searchTerm && !company.name.toLowerCase().includes(searchTerm.toLowerCase())) {
+    // Search filter
+    if (
+      filters.searchTerm &&
+      !company.name.toLowerCase().includes(filters.searchTerm.toLowerCase())
+    ) {
       return false;
     }
+
+    // Status filter
     if (filters.status !== 'all') {
-      if (filters.status === 'critical' && company.criticalCount === 0) return false;
-      if (filters.status === 'warning' && company.warningCount === 0) return false;
-      if (filters.status === 'healthy' && company.healthyCount !== company.systemCount) return false;
+      if (filters.status === 'critical' && company.criticalCount === 0) {
+        return false;
+      }
+      if (filters.status === 'warning' && company.warningCount === 0) {
+        return false;
+      }
+      // "Healthy" means all are healthy
+      if (
+        filters.status === 'healthy' &&
+        company.healthyCount !== company.systemCount
+      ) {
+        return false;
+      }
     }
+
+    // Version filter
     if (filters.version !== 'all') {
       const hasVersion = Object.keys(company.versions).some((v) =>
         v.includes(filters.version)
       );
       if (!hasVersion) return false;
     }
+
+    // Telemetry filter
+    if (filters.telemetry === 'onlyActive') {
+      // show only companies that have >= 1 active telemetry system
+      if (company.telemetryActive < 1) {
+        return false;
+      }
+    }
+
     return true;
   });
 
@@ -221,17 +383,23 @@ export default function Companies() {
       <h1 className="text-2xl font-bold">Companies Overview</h1>
 
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        {/* Search Input */}
         <div className="relative w-full sm:w-64">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-[#eeeeee]/60" />
           <input
             type="text"
             placeholder="Search companies..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
+            value={filters.searchTerm}
+            onChange={(e) =>
+              setFilters((prev) => ({ ...prev, searchTerm: e.target.value }))
+            }
             className="w-full pl-10 pr-4 py-2 bg-[#0b3c43] rounded-lg border border-[#22c1d4]/20 focus:outline-none focus:border-[#22c1d4]"
           />
         </div>
+
+        {/* Filters */}
         <div className="flex gap-4">
+          {/* Status Filter */}
           <select
             className="bg-[#0b3c43] text-[#eeeeee] rounded px-3 py-2 border border-[#22c1d4]/20 focus:outline-none"
             value={filters.status}
@@ -244,6 +412,8 @@ export default function Companies() {
             <option value="warning">Warning</option>
             <option value="critical">Critical</option>
           </select>
+
+          {/* Version Filter (built dynamically) */}
           <select
             className="bg-[#0b3c43] text-[#eeeeee] rounded px-3 py-2 border border-[#22c1d4]/20 focus:outline-none"
             value={filters.version}
@@ -252,13 +422,29 @@ export default function Companies() {
             }
           >
             <option value="all">All Versions</option>
-            <option value="3.5">AiRE 3.5</option>
-            <option value="4.0">AiRE 4.0</option>
+            {allVersions.map((ver) => (
+              <option key={ver} value={ver}>
+                {ver}
+              </option>
+            ))}
+          </select>
+
+          {/* Telemetry Filter */}
+          <select
+            className="bg-[#0b3c43] text-[#eeeeee] rounded px-3 py-2 border border-[#22c1d4]/20 focus:outline-none"
+            value={filters.telemetry}
+            onChange={(e) =>
+              setFilters((prev) => ({ ...prev, telemetry: e.target.value }))
+            }
+          >
+            <option value="all">All Telemetry</option>
+            <option value="onlyActive">Only Active</option>
           </select>
         </div>
       </div>
 
       {isSingleCompany ? (
+        // If there's exactly 1 company, show an expanded card
         filteredCompanies.map((company) => (
           <div
             key={company.name}
@@ -285,6 +471,7 @@ export default function Companies() {
             </div>
 
             <div className="flex gap-4">
+              {/* Capacity Usage */}
               <div className="bg-[#06272b] rounded-lg p-4 flex-1">
                 <div className="flex justify-between items-center mb-2">
                   <span className="text-sm text-[#eeeeee]/60">
@@ -308,10 +495,12 @@ export default function Companies() {
                   />
                 </div>
                 <div className="text-xs text-[#eeeeee]/60 mt-1">
-                  {(company.usedCapacity / 1024).toFixed(2)} TB / {(company.totalCapacity / 1024).toFixed(2)} TB
+                  {(company.usedCapacity / 1024).toFixed(2)} TB /{' '}
+                  {(company.totalCapacity / 1024).toFixed(2)} TB
                 </div>
               </div>
 
+              {/* System Health (based on subscription) */}
               {(() => {
                 if (!healthCanAccess && !healthShouldBlur) return null;
                 return (
@@ -324,13 +513,21 @@ export default function Companies() {
                         </span>
                       </div>
                     )}
-                    <div className={`${healthShouldBlur ? 'blur-sm pointer-events-none' : ''}`}>
+                    <div
+                      className={`${
+                        healthShouldBlur ? 'blur-sm pointer-events-none' : ''
+                      }`}
+                    >
                       <div className="flex justify-between items-center mb-2">
-                        <span className="text-sm text-[#eeeeee]/60">System Health</span>
+                        <span className="text-sm text-[#eeeeee]/60">
+                          System Health
+                        </span>
                         <Server className="w-4 h-4 text-[#22c1d4]" />
                       </div>
                       <div className="text-2xl font-bold mb-1">
-                        {healthShouldBlur ? 'N/A' : `${Math.round(company.avgHealthScore)}%`}
+                        {healthShouldBlur
+                          ? 'N/A'
+                          : `${Math.round(company.avgHealthScore)}`}
                       </div>
                       <div className="flex items-center gap-2 text-xs">
                         {healthShouldBlur ? (
@@ -357,9 +554,12 @@ export default function Companies() {
                 );
               })()}
 
+              {/* Telemetry */}
               <div className="bg-[#06272b] rounded-lg p-4 flex-1">
                 <div className="flex justify-between items-center mb-2">
-                  <span className="text-sm text-[#eeeeee]/60">Telemetry Status</span>
+                  <span className="text-sm text-[#eeeeee]/60">
+                    Telemetry Status
+                  </span>
                   <Signal className="w-4 h-4 text-[#22c1d4]" />
                 </div>
                 <div className="text-2xl font-bold mb-1">
@@ -371,6 +571,7 @@ export default function Companies() {
               </div>
             </div>
 
+            {/* Versions */}
             <div className="mt-4">
               <div className="flex items-center gap-2 text-sm text-[#eeeeee]/60 mb-2">
                 <Users className="w-4 h-4 text-[#22c1d4]" />
@@ -378,7 +579,10 @@ export default function Companies() {
               </div>
               <div className="flex flex-wrap gap-2">
                 {Object.entries(company.versions).map(([version, count]) => (
-                  <span key={version} className="px-2 py-1 bg-[#06272b] rounded text-xs">
+                  <span
+                    key={version}
+                    className="px-2 py-1 bg-[#06272b] rounded text-xs"
+                  >
                     {version} ({count})
                   </span>
                 ))}
@@ -387,6 +591,7 @@ export default function Companies() {
           </div>
         ))
       ) : (
+        // Otherwise, show all companies in a grid
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
           {filteredCompanies.map((company) => (
             <div
@@ -414,6 +619,7 @@ export default function Companies() {
               </div>
 
               <div className="space-y-4">
+                {/* Capacity */}
                 <div className="bg-[#06272b] rounded-lg p-4">
                   <div className="flex justify-between items-center mb-2">
                     <span className="text-sm text-[#eeeeee]/60">
@@ -437,10 +643,12 @@ export default function Companies() {
                     />
                   </div>
                   <div className="text-xs text-[#eeeeee]/60 mt-1">
-                    {(company.usedCapacity / 1024).toFixed(2)} TB / {(company.totalCapacity / 1024).toFixed(2)} TB
+                    {(company.usedCapacity / 1024).toFixed(2)} TB /{' '}
+                    {(company.totalCapacity / 1024).toFixed(2)} TB
                   </div>
                 </div>
 
+                {/* Health Score */}
                 {(() => {
                   if (!healthCanAccess && !healthShouldBlur) return null;
                   return (
@@ -453,13 +661,21 @@ export default function Companies() {
                           </span>
                         </div>
                       )}
-                      <div className={`${healthShouldBlur ? 'blur-sm pointer-events-none' : ''}`}>
+                      <div
+                        className={`${
+                          healthShouldBlur ? 'blur-sm pointer-events-none' : ''
+                        }`}
+                      >
                         <div className="flex justify-between items-center mb-2">
-                          <span className="text-sm text-[#eeeeee]/60">System Health</span>
+                          <span className="text-sm text-[#eeeeee]/60">
+                            System Health
+                          </span>
                           <Server className="w-4 h-4 text-[#22c1d4]" />
                         </div>
                         <div className="text-2xl font-bold mb-1">
-                          {healthShouldBlur ? 'N/A' : `${Math.round(company.avgHealthScore)}%`}
+                          {healthShouldBlur
+                            ? 'N/A'
+                            : `${Math.round(company.avgHealthScore)}`}
                         </div>
                         <div className="flex items-center gap-2 text-xs">
                           {healthShouldBlur ? (
@@ -486,9 +702,12 @@ export default function Companies() {
                   );
                 })()}
 
+                {/* Telemetry */}
                 <div className="bg-[#06272b] rounded-lg p-4 flex-1">
                   <div className="flex justify-between items-center mb-2">
-                    <span className="text-sm text-[#eeeeee]/60">Telemetry Status</span>
+                    <span className="text-sm text-[#eeeeee]/60">
+                      Telemetry Status
+                    </span>
                     <Signal className="w-4 h-4 text-[#22c1d4]" />
                   </div>
                   <div className="text-2xl font-bold mb-1">
@@ -500,6 +719,7 @@ export default function Companies() {
                 </div>
               </div>
 
+              {/* Versions */}
               <div className="mt-4">
                 <div className="flex items-center gap-2 text-sm text-[#eeeeee]/60 mb-2">
                   <Users className="w-4 h-4 text-[#22c1d4]" />
@@ -507,7 +727,10 @@ export default function Companies() {
                 </div>
                 <div className="flex flex-wrap gap-2">
                   {Object.entries(company.versions).map(([version, count]) => (
-                    <span key={version} className="px-2 py-1 bg-[#06272b] rounded text-xs">
+                    <span
+                      key={version}
+                      className="px-2 py-1 bg-[#06272b] rounded text-xs"
+                    >
                       {version} ({count})
                     </span>
                   ))}
