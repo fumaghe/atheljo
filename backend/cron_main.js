@@ -52,6 +52,28 @@ cron.schedule('*/3 * * * *', () => {
   });
 });
 
+// Pianifica l'esecuzione di firestore_capacity_trends_cleanup.py ogni giorno alle 1:00 AM
+cron.schedule('25 20 * * *', () => {
+  console.log('[CRON_MAIN] Starting firestore_capacity_trends_cleanup.py at 1:00 AM');
+  
+  // Imposta il percorso al file firestore_capacity_trends_cleanup.py
+  const cleanupScriptPath = path.join(__dirname, '..', 'Archimedes2.0', 'firestore_capacity_trends_cleanup.py');
+
+  const pyCleanupProcess = spawn('python3', [cleanupScriptPath], { cwd: workingDir });
+  
+  pyCleanupProcess.stdout.on('data', (data) => {
+    console.log(`[CRON_MAIN - Cleanup] STDOUT: ${data}`);
+  });
+  
+  pyCleanupProcess.stderr.on('data', (data) => {
+    console.error(`[CRON_MAIN - Cleanup] STDERR: ${data}`);
+  });
+  
+  pyCleanupProcess.on('close', (code) => {
+    console.log(`[CRON_MAIN - Cleanup] firestore_capacity_trends_cleanup.py exited with code ${code}`);
+  });
+});
+
 // Funzione per aggiornare MUP per tutti i sistemi
 async function updateMUP() {
   console.log('[CRON_MAIN] Starting MUP update for all systems');
