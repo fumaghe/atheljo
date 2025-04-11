@@ -52,8 +52,8 @@ cron.schedule('*/5 * * * *', () => {
   });
 });
 
-cron.schedule('59 23 * * *', () => {
-  console.log('[CRON_MAIN] Starting firestore_capacity_trends_cleanup.py at 23:59');
+cron.schedule('11 23 * * *', () => {
+  console.log('[CRON_MAIN] Starting firestore_capacity_trends_cleanup.py at 23:11');
   
   // Imposta il percorso al file firestore_capacity_trends_cleanup.py
   const cleanupScriptPath = path.join(__dirname, '..', 'Archimedes2.0', 'firestore_capacity_trends_cleanup.py');
