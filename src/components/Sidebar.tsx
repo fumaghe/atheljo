@@ -12,49 +12,47 @@ import {
 import { FaFireAlt, FaStar, FaGem } from 'react-icons/fa';
 import { useAuth } from '../context/AuthContext';
 import { motion } from 'framer-motion';
-
-// Hook che controlla i permessi di subscription
 import { useSubscriptionPermissions } from '../hooks/useSubscriptionPermissions';
 
 export default function Sidebar() {
   const { user } = useAuth();
   const [isCollapsed, setCollapsed] = useState(false);
 
-  const isAdmin = user?.role === 'admin';
-  const isCustomer = user?.role === 'customer';
-
-  // Voci base della sidebar
   const baseItems = [
     {
       to: '/',
       label: 'Dashboard',
       icon: Home,
-      subscriptionKey: 'Dashboard Link'
+      subscriptionKey: 'Dashboard Link',
+      id: "sidebar-link-dashboard"
     },
     {
       to: '/systems',
       label: 'Analytics',
       icon: BarChart2,
-      subscriptionKey: 'Systems Link'
+      subscriptionKey: 'Systems Link',
+      id: "sidebar-link-analytics"
     },
     {
       to: '/alerts',
       label: 'Alerts',
       icon: AlertTriangle,
-      subscriptionKey: 'Alerts Link'
+      subscriptionKey: 'Alerts Link',
+      id: "sidebar-link-alerts"
     },
     {
       to: '/reports',
       label: 'Reports',
       icon: FileText,
-      subscriptionKey: 'Reports Link'
+      subscriptionKey: 'Reports Link',
+      id: "sidebar-link-reports"
     }
   ];
 
-  // Funzione per renderizzare l'icona dell'abbonamento in base al piano dell'utente
   const renderSubscriptionIcon = (isActive: boolean) => {
     if (!user || !user.subscription) return null;
     const baseIconClasses = "w-5 h-5";
+
     switch (user.subscription) {
       case 'Essential':
         return (
@@ -87,17 +85,17 @@ export default function Sidebar() {
 
   return (
     <aside
+      id="sidebar-nav"
       className={`
         sticky top-[60px] h-[calc(100vh-60px)]
-        ${isCollapsed ? 'w-[90px] px-2' : 'w-[180px]'} 
-        bg-[#06272b] shadow-xl rounded-r-3xl 
+        ${isCollapsed ? 'w-[90px] px-2' : 'w-[180px]'}
+        bg-[#06272b] shadow-xl rounded-r-3xl
         transition-width duration-300 ease-in-out
       `}
     >
-      {/* Pulsante per collapse/expand */}
       <button
         className={`
-          w-full flex p-2 text-[#22c1d4] hover:text-[#eeeeee] 
+          w-full flex p-2 text-[#22c1d4] hover:text-[#eeeeee]
           ${isCollapsed ? 'justify-center' : 'justify-end'}
         `}
         onClick={() => setCollapsed(!isCollapsed)}
@@ -109,9 +107,13 @@ export default function Sidebar() {
         )}
       </button>
 
-      <nav className={`${isCollapsed ? 'items-center' : 'items-start px-2'} py-1 flex flex-col overflow-auto`}>
+      <nav
+        className={`
+          ${isCollapsed ? 'items-center' : 'items-start px-2'}
+          py-1 flex flex-col overflow-auto
+        `}
+      >
         {baseItems.map(item => {
-          // Controlla i permessi per la voce della sidebar
           const { canAccess, shouldBlur } = useSubscriptionPermissions('Sidebar', item.subscriptionKey);
           if (!canAccess && !shouldBlur) return null;
 
@@ -126,6 +128,7 @@ export default function Sidebar() {
           return (
             <NavLink
               key={item.to}
+              id={item.id}
               to={item.to}
               className={({ isActive }) => `
                 ${baseLinkClasses}
@@ -150,9 +153,10 @@ export default function Sidebar() {
           );
         })}
 
-        {/* Voce "Your Subscription" */}
+        {/* Link "SmartCARE" / Subscription */}
         <NavLink
           to="/your-subscription"
+          id="sidebar-link-your-subscription"
           className={({ isActive }) => {
             const baseLink = 'group relative flex items-center transition-colors duration-200 ease-in-out my-1';
             const activeClasses = 'bg-[#22c1d4] text-[#06272b]';

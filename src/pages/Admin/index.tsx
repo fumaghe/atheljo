@@ -1,19 +1,29 @@
-// src/pages/Admin/index.tsx
 import React, { useState, useEffect } from 'react';
+import {
+  UserPlus,
+  Trash2,
+  Edit,
+  Save,
+  X,
+  Search,
+  Crown,
+  User as UserIcon,
+  Star
+} from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
-import { User } from '../../types/auth';
-import { UserPlus, Trash2, Edit, Save, X, Search, Crown, User as UserIcon, Star } from 'lucide-react';
 import { useCompany } from '../../context/CompanyContext';
 import DatePicker from 'react-datepicker';
 import 'react-datepicker/dist/react-datepicker.css';
+import { User } from '../../types/auth';
 
 const Admin: React.FC = () => {
   const { getUsers, addUser, updateUser, deleteUser } = useAuth();
   const { companies } = useCompany();
-  
+
   const [users, setUsers] = useState<User[]>([]);
   const [isAddingUser, setIsAddingUser] = useState(false);
   const [editingUserId, setEditingUserId] = useState<string | null>(null);
+  const [editUser, setEditUser] = useState<Partial<User> | null>(null);
 
   const [searchTerm, setSearchTerm] = useState('');
   const [companyFilter, setCompanyFilter] = useState('');
@@ -27,8 +37,6 @@ const Admin: React.FC = () => {
     subscription: 'None' as 'None' | 'Essential' | 'Advantage' | 'Premiere',
     subscriptionExpires: null as string | null
   });
-
-  const [editUser, setEditUser] = useState<Partial<User> | null>(null);
 
   useEffect(() => {
     getUsers().then(fetchedUsers => setUsers(fetchedUsers));
@@ -72,18 +80,18 @@ const Admin: React.FC = () => {
 
   const handleSaveEdit = async () => {
     if (!editUser || !editingUserId) return;
-  
+
+    // Gestione del campo password
     const dataToUpdate = { ...editUser };
-  
     if (!dataToUpdate.password) {
       delete dataToUpdate.password;
     }
-  
-    // Conversione semplificata delle permissions in array di stringhe
+
+    // Conversione delle permissions in un array di stringhe
     dataToUpdate.permissions = dataToUpdate.permissions?.map((p: any) =>
       typeof p === 'object' ? p.id : p
     ) || [];
-  
+
     const updated = await updateUser(editingUserId, dataToUpdate);
     if (updated) {
       setUsers(prev => prev.map(u => (u.id === editingUserId ? updated : u)));
@@ -91,7 +99,7 @@ const Admin: React.FC = () => {
       setEditUser(null);
     }
   };
-  
+
   const handleCancelEdit = () => {
     setEditingUserId(null);
     setEditUser(null);
@@ -106,6 +114,7 @@ const Admin: React.FC = () => {
     }
   };
 
+  // Filtra gli utenti in base ai criteri di ricerca e filtro
   const filteredUsers = users.filter(user => {
     const matchesSearch =
       user.username.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -128,35 +137,70 @@ const Admin: React.FC = () => {
     }
   };
 
+  // Funzione per resettare il walkthrough per un singolo utente (se true diventa false)
+  const handleCompleteWalkthroughForUser = async (user: User) => {
+    if (!user.walkthroughCompleted) return;
+    const updated = await updateUser(user.id, { walkthroughCompleted: false });
+    if (updated) {
+      setUsers(prev =>
+        prev.map(u => (u.id === user.id ? { ...u, walkthroughCompleted: false } : u))
+      );
+      if (editingUserId === user.id && editUser) {
+        setEditUser({ ...editUser, walkthroughCompleted: false });
+      }
+    }
+  };
+
+  // Funzione per resettare il walkthrough per tutti gli utenti (imposta walkthroughCompleted a false)
+  const handleCompleteWalkthroughForAll = async () => {
+    for (const user of users) {
+      if (user.walkthroughCompleted) {
+        const updated = await updateUser(user.id, { walkthroughCompleted: false });
+        if (updated) {
+          setUsers(prev =>
+            prev.map(u => (u.id === user.id ? { ...u, walkthroughCompleted: false } : u))
+          );
+        }
+      }
+    }
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex justify-between items-center">
-        <h1 className="text-2xl font-bold flex items-center gap-2">
+        <div className="flex items-center gap-2">
           <UserIcon className="w-6 h-6" />
-          User Management
-        </h1>
-        <button
-          onClick={() => setIsAddingUser(!isAddingUser)}
-          className="flex items-center gap-2 bg-[#22c1d4] text-[#06272b] px-4 py-2 rounded-lg font-semibold hover:bg-[#22c1d4]/90 transition-colors"
-        >
-          {isAddingUser ? <X className="w-5 h-5" /> : <UserPlus className="w-5 h-5" />}
-          {isAddingUser ? 'Cancel' : 'Add User'}
-        </button>
+          <h1 className="text-2xl font-bold">User Management</h1>
+        </div>
+        <div className="flex gap-4">
+          {/* Pulsante per resettare il walkthrough per tutti */}
+          <button
+            onClick={handleCompleteWalkthroughForAll}
+            className="flex items-center gap-2 bg-[#22c1d4] text-[#06272b] px-4 py-2 rounded-lg font-semibold hover:bg-[#22c1d4]/90 transition-colors"
+          >
+            Reset Walkthrough
+          </button>
+          <button
+            onClick={() => setIsAddingUser(!isAddingUser)}
+            className="flex items-center gap-2 bg-[#22c1d4] text-[#06272b] px-4 py-2 rounded-lg font-semibold hover:bg-[#22c1d4]/90 transition-colors"
+          >
+            {isAddingUser ? <X className="w-5 h-5" /> : <UserPlus className="w-5 h-5" />}
+            {isAddingUser ? 'Cancel' : 'Add User'}
+          </button>
+        </div>
       </div>
 
       <div className="bg-[#0b3c43] rounded-lg p-4 shadow-lg">
         <div className="flex flex-col md:flex-row gap-4">
-          <div className="flex-1">
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-[#eeeeee]/60" />
-              <input
-                type="text"
-                placeholder="Search users..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="w-full pl-10 pr-4 py-2 bg-[#06272b] rounded-lg border border-[#22c1d4]/20 focus:outline-none focus:border-[#22c1d4]"
-              />
-            </div>
+          <div className="flex-1 relative">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-[#eeeeee]/60" />
+            <input
+              type="text"
+              placeholder="Search users..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="w-full pl-10 pr-4 py-2 bg-[#06272b] rounded-lg border border-[#22c1d4]/20 focus:outline-none focus:border-[#22c1d4]"
+            />
           </div>
           <div>
             <select
@@ -214,7 +258,9 @@ const Admin: React.FC = () => {
                 <label className="block text-sm font-medium mb-2">Role</label>
                 <select
                   value={newUser.role}
-                  onChange={(e) => setNewUser({ ...newUser, role: e.target.value as 'admin' | 'customer' | 'extra' })}
+                  onChange={(e) =>
+                    setNewUser({ ...newUser, role: e.target.value as 'admin' | 'customer' | 'extra' })
+                  }
                   className="w-full bg-[#06272b] rounded-lg px-4 py-2 border border-[#22c1d4]/20 focus:outline-none focus:border-[#22c1d4]"
                 >
                   <option value="admin">Admin</option>
@@ -241,7 +287,9 @@ const Admin: React.FC = () => {
                 <label className="block text-sm font-medium mb-2">Subscription Level</label>
                 <select
                   value={newUser.subscription}
-                  onChange={(e) => setNewUser({ ...newUser, subscription: e.target.value as 'None' | 'Essential' | 'Advantage' | 'Premiere' })}
+                  onChange={(e) =>
+                    setNewUser({ ...newUser, subscription: e.target.value as 'None' | 'Essential' | 'Advantage' | 'Premiere' })
+                  }
                   className="w-full bg-[#06272b] rounded-lg px-4 py-2 border border-[#22c1d4]/20"
                 >
                   <option value="None">None</option>
@@ -312,7 +360,7 @@ const Admin: React.FC = () => {
                         />
                       </div>
                     </div>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                       <div>
                         <label className="block text-sm font-medium mb-2">Subscription Level</label>
                         <select
@@ -341,6 +389,22 @@ const Admin: React.FC = () => {
                           placeholderText="Select expiration date"
                         />
                       </div>
+                      <div>
+                        <label className="block text-sm font-medium mb-2">Walkthrough Status</label>
+                        <select
+                          value={editUser?.walkthroughCompleted ? 'Completed' : 'Pending'}
+                          onChange={(e) => {
+                            const newStatus = e.target.value;
+                            setEditUser(prev =>
+                              prev ? { ...prev, walkthroughCompleted: newStatus === 'Completed' } : null
+                            );
+                          }}
+                          className="w-full bg-[#0b3c43] rounded-lg px-4 py-2 border border-[#22c1d4]/20 focus:outline-none focus:border-[#22c1d4]"
+                        >
+                          <option value="Pending">Pending</option>
+                          <option value="Completed">Completed</option>
+                        </select>
+                      </div>
                     </div>
                     <div className="flex justify-end gap-2">
                       <button
@@ -361,18 +425,16 @@ const Admin: React.FC = () => {
                   </div>
                 ) : (
                   <div className="flex justify-between items-center">
-                    <div className="flex items-center gap-4">
-                      <div>
-                        <h3 className="font-semibold text-[#eeeeee]">{user.username}</h3>
-                        <div className="flex items-center gap-2 text-sm">
-                          <span className={getRoleBadgeClasses(user.role)}>
-                            {user.role === 'admin' && <Crown className="w-4 h-4" />}
-                            {user.role === 'customer' && <UserIcon className="w-4 h-4" />}
-                            {user.role === 'extra' && <Star className="w-4 h-4" />}
-                            <span className="capitalize">{user.role}</span>
-                          </span>
-                          <span className="text-[#eeeeee]">{user.company}</span>
-                        </div>
+                    <div className="flex flex-col">
+                      <h3 className="font-semibold text-[#eeeeee]">{user.username}</h3>
+                      <div className="flex items-center gap-2 text-sm">
+                        <span className={getRoleBadgeClasses(user.role)}>
+                          {user.role === 'admin' && <Crown className="w-4 h-4" />}
+                          {user.role === 'customer' && <UserIcon className="w-4 h-4" />}
+                          {user.role === 'extra' && <Star className="w-4 h-4" />}
+                          <span className="capitalize">{user.role}</span>
+                        </span>
+                        <span className="text-[#eeeeee]">{user.company}</span>
                       </div>
                     </div>
                     <div className="flex items-center gap-2">
@@ -382,6 +444,7 @@ const Admin: React.FC = () => {
                       >
                         <Edit className="w-5 h-5 text-[#22c1d4]" />
                       </button>
+                      {/* Pulsante per il reset del walkthrough rimosso in visualizzazione non-edit */}
                       <button
                         onClick={() => handleDeleteUser(user.id)}
                         className="p-2 hover:bg-[#0b3c43] rounded-full transition-colors"

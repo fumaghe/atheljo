@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import {
@@ -15,73 +15,51 @@ import { FaFireAlt, FaStar, FaGem } from 'react-icons/fa';
 import storvixLogo from '../assets/images/STORViXTM_WHITE.png';
 import xLogo from '../assets/images/X_White.png';
 
-export default function Header() {
+// Rimosso restartTour e tourActive
+interface HeaderProps {}
+
+export default function Header(props: HeaderProps) {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
 
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [showManagementMenu, setShowManagementMenu] = useState(false);
-  const [isUpdating, setIsUpdating] = useState(false);
-  const [updateStatus, setUpdateStatus] = useState<'idle' | 'success' | 'error'>('idle');
-  const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
-
-  // State for the demo info popup
   const [showDemoInfo, setShowDemoInfo] = useState(false);
+
+  // Listener per aprire il menu utente (usato dal tour)
+  useEffect(() => {
+    const openUserMenuHandler = () => {
+      setShowUserMenu(true);
+    };
+    window.addEventListener('openUserMenu', openUserMenuHandler);
+    return () => {
+      window.removeEventListener('openUserMenu', openUserMenuHandler);
+    };
+  }, []);
 
   const handleLogout = () => {
     logout();
     navigate('/login');
   };
 
-  const handleUpdateData = async () => {
-    try {
-      setIsUpdating(true);
-      setUpdateStatus('idle');
-      const apiBase = import.meta.env.VITE_API_BASE || '/api';
-      const response = await fetch(`${apiBase}/update_data`, { method: 'POST' });
-      if (!response.ok) {
-        throw new Error('Update failed');
-      }
-      setUpdateStatus('success');
-      setLastUpdate(new Date());
-    } catch (error) {
-      console.error('Error updating data:', error);
-      setUpdateStatus('error');
-    } finally {
-      setIsUpdating(false);
-    }
-  };
-
   const renderSubscriptionIcon = () => {
     if (!user || !user.subscription) return null;
     switch (user.subscription) {
       case 'Essential':
-        return <FaFireAlt className="w-4 h-4" style={{ color: '#f8485e' }} />;
+        return <FaFireAlt id="header-subscription-icon" className="w-4 h-4" style={{ color: '#f8485e' }} />;
       case 'Advantage':
-        return <FaStar className="w-4 h-4" style={{ color: '#eeeeee' }} />;
+        return <FaStar id="header-subscription-icon" className="w-4 h-4" style={{ color: '#eeeeee' }} />;
       case 'Premiere':
-        return <FaGem className="w-4 h-4" style={{ color: '#22c1d4' }} />;
+        return <FaGem id="header-subscription-icon" className="w-4 h-4" style={{ color: '#22c1d4' }} />;
       default:
         return null;
     }
   };
 
   return (
-    <header
-      className="
-        sticky top-0 z-50
-        bg-[#06272b]
-        border-b border-[#22c1d4]/20
-        px-6
-        flex
-        items-center
-        justify-between
-        flex-wrap
-        min-h-[60px]
-      "
-    >
-      {/* Left side: Logo */}
-      <div className="flex items-center gap-4 py-2">
+    <header className="sticky top-0 z-50 bg-[#06272b] border-b border-[#22c1d4]/20 px-6 flex items-center justify-between flex-wrap min-h-[60px]">
+      {/* Left side: Logo & Title */}
+      <div id="header-left" className="flex items-center gap-4 py-2">
         <img
           src={storvixLogo}
           alt="StorViX Logo"
@@ -92,9 +70,14 @@ export default function Header() {
           alt="StorViX Logo Small"
           className="block md:hidden h-8 object-contain"
         />
+        {/*
+        <h1 id="dashboard-title" className="text-xl font-bold hidden md:block">
+          Avalon Dashboard
+        </h1>
+        */}
       </div>
 
-      {/* Center: Demo message */}
+      {/* Center: Demo Message */}
       <div className="flex-1 flex justify-center">
         <span className="text-sm text-[#eeeeee]/80">
           You are using a demo version.{' '}
@@ -107,10 +90,11 @@ export default function Header() {
         </span>
       </div>
 
-      {/* Right side: User icon and menu */}
-      <div className="flex items-center gap-4 py-2">
+      {/* Right side: User menu */}
+      <div id="header-user-menu" className="flex items-center gap-4 py-2">
         <div className="relative">
           <div
+            id="header-user-icon"
             className="flex items-center gap-2 cursor-pointer hover:text-[#22c1d4]"
             onClick={() => setShowUserMenu(!showUserMenu)}
           >
@@ -118,22 +102,22 @@ export default function Header() {
             <User className="w-5 h-5" />
           </div>
           {showUserMenu && (
-            <div className="absolute right-0 mt-2 w-48 bg-[#0b3c43] rounded-lg shadow-lg py-1 z-10">
+            <div
+              id="header-dropdown-menu"
+              className="absolute right-0 mt-2 w-48 bg-[#0b3c43] rounded-lg shadow-lg py-1 z-10"
+            >
               {user && (
                 <div className="px-4 py-2 text-sm text-[#eeeeee] border-b border-[#22c1d4]/10">
                   {user.username}
                 </div>
               )}
-              {/* 
-                For "admin" users, display Management submenu (all three items),
-                For "customer" users, display only Sub-Accounts.
-                For "admin_employee" or "employee", no management section is shown.
-              */}
               {user?.role === 'admin' && (
                 <div
+                  id="header-menu-management"
                   className="relative"
                   onMouseEnter={() => setShowManagementMenu(true)}
                   onMouseLeave={() => setShowManagementMenu(false)}
+                  onClick={() => setShowManagementMenu(prev => !prev)}
                 >
                   <button
                     className="flex items-center gap-2 w-full text-left px-4 py-2 hover:bg-[#22c1d4]/10 transition-colors"
@@ -144,6 +128,7 @@ export default function Header() {
                   {showManagementMenu && (
                     <div className="absolute right-full top-0 mr-2 w-48 bg-[#0b3c43] rounded-lg shadow-lg py-1 z-20">
                       <button
+                        id="header-menu-subaccounts"
                         onClick={() => {
                           navigate('/customer/employees');
                           setShowUserMenu(false);
@@ -179,6 +164,7 @@ export default function Header() {
               )}
               {user?.role === 'customer' && (
                 <button
+                  id="header-menu-subaccounts"
                   onClick={() => {
                     navigate('/customer/employees');
                     setShowUserMenu(false);
@@ -189,10 +175,8 @@ export default function Header() {
                   Sub-Accounts
                 </button>
               )}
-              {/* For "admin_employee" or "employee", the management section is not shown */}
-
-              {/* Settings */}
               <button
+                id="header-menu-settings"
                 onClick={() => {
                   navigate('/settings');
                   setShowUserMenu(false);
@@ -202,8 +186,8 @@ export default function Header() {
                 <Settings className="w-4 h-4 inline-block mr-2" />
                 Settings
               </button>
-              {/* Support */}
               <button
+                id="header-menu-support"
                 onClick={() => {
                   navigate('/support');
                   setShowUserMenu(false);
@@ -213,41 +197,28 @@ export default function Header() {
                 <HelpCircle className="w-4 h-4 inline-block mr-2" />
                 Support
               </button>
-              {/* Sign Out */}
               <button
+                id="header-menu-signout"
                 onClick={handleLogout}
-                className="
-                  flex items-center gap-2
-                  w-full text-left
-                  px-4 py-2
-                  text-[#f8485e]
-                  hover:bg-[#f8485e]/10
-                  transition-colors
-                "
+                className="flex items-center gap-2 w-full text-left px-4 py-2 text-[#f8485e] hover:bg-[#f8485e]/10 transition-colors"
               >
                 <LogOut className="w-4 h-4" />
                 Sign Out
               </button>
+              {/*
+              Il pulsante "Restart Walkthrough" è stato rimosso.
+              */}
             </div>
           )}
         </div>
       </div>
 
-      {/* Demo Popup */}
       {showDemoInfo && (
-        <div
-          className="
-            fixed inset-0 z-50
-            flex items-center justify-center
-          "
-        >
-          {/* Dark overlay */}
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
           <div
             className="absolute inset-0 bg-black bg-opacity-50"
             onClick={() => setShowDemoInfo(false)}
           ></div>
-
-          {/* Popup box */}
           <div className="relative bg-[#06272b] p-6 rounded-md shadow-md w-[90%] max-w-xl text-[#eeeeee]">
             <button
               className="absolute top-2 right-2 text-[#eeeeee]/50 hover:text-[#eeeeee]"
@@ -278,15 +249,7 @@ export default function Header() {
             </p>
             <div className="mt-6 text-right">
               <button
-                className="
-                  bg-[#22c1d4]
-                  text-[#06272b]
-                  font-semibold
-                  px-4 py-2
-                  rounded-md
-                  hover:bg-[#22c1d4]/80
-                  transition-colors
-                "
+                className="bg-[#22c1d4] text-[#06272b] font-semibold px-4 py-2 rounded-md hover:bg-[#22c1d4]/80 transition-colors"
                 onClick={() => setShowDemoInfo(false)}
               >
                 Close

@@ -17,8 +17,11 @@ export interface User {
   // Nuovi campi employee
   parentCustomerId?: string | null;
   permissions?: string[];   // e.g. ['reports', 'analytics', ...]
-  visibleCompanies?: string[] | null; // opzionale, aggiunto
-  forcePasswordChange?: boolean;  // Aggiunto qui
+  visibleCompanies?: string[] | null;
+  forcePasswordChange?: boolean;
+
+  // NEW field: flag to indicate if the walkthrough was completed
+  walkthroughCompleted?: boolean;
 }
 
 export interface LoginCredentials {

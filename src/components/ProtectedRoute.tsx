@@ -30,7 +30,6 @@ const ProtectedRoute: React.FC<ProtectedRouteProps> = ({
     return <Navigate to="/login" state={{ from: location }} replace />;
   }
 
-  // Gestione array di ruoli o singolo ruolo
   if (requiredRole && (
       (Array.isArray(requiredRole) && !requiredRole.includes(user.role)) ||
       (!Array.isArray(requiredRole) && user.role !== requiredRole)

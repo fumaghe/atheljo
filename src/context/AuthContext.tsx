@@ -26,7 +26,6 @@ interface AuthContextType {
   users: User[];
 }
 
-// Definizione del context
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -37,7 +36,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [error, setError] = useState<string | null>(null);
   const [users, setUsers] = useState<User[]>([]);
 
-  // MODIFICA: Usa un percorso relativo in produzione
+  // Per ambiente di produzione usa il percorso appropriato
   const API_BASE = import.meta.env.VITE_API_BASE || '/api';
 
   // 1) Carica la sessione da localStorage
@@ -77,6 +76,29 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   }, [user, isAuthenticated, isInitializingSession]);
 
+  // 2.1) Refetch dei dati utente dal DB per aggiornare campi come walkthroughCompleted
+  useEffect(() => {
+    if (isAuthenticated && user?.id) {
+      const refreshUserData = async () => {
+        try {
+          const response = await fetch(`${API_BASE}/users/${user.id}`);
+          if (response.ok) {
+            const updatedUser = await response.json();
+            setUser(updatedUser);
+            localStorage.setItem('aiopsUser', JSON.stringify(updatedUser));
+            localStorage.setItem('aiopsUserTimestamp', Date.now().toString());
+          } else {
+            console.error('Failed to fetch updated user data');
+          }
+        } catch (error) {
+          console.error('Error refreshing user data:', error);
+        }
+      };
+
+      refreshUserData();
+    }
+  }, [isAuthenticated, user?.id, API_BASE]);
+
   // 3) Funzione di login
   const login = async (credentials: LoginCredentials): Promise<LoginResult> => {
     setIsLoading(true);
@@ -98,7 +120,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setIsLoading(false);
         return { success: false, twoFactorRequired: true, userId: data.userId, message: data.message };
       }
-      // Login completato
+      // Login completato: imposta il profilo utente ricevuto dal server
       setUser(data);
       setIsAuthenticated(true);
       setIsLoading(false);
@@ -159,7 +181,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // 7) Aggiorna utente
   const updateUser = async (id: string, userData: Partial<User>): Promise<User | null> => {
     try {
-      // Converte 'permissions' in un array di stringhe
+      // Gestione della conversione delle permissions in array di stringhe
       if (userData.permissions) {
         if (Array.isArray(userData.permissions) && userData.permissions.length > 0) {
           if (typeof userData.permissions[0] === 'object') {
@@ -182,7 +204,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
       const updatedUser = await response.json();
       setUsers(prev => prev.map(u => (u.id === id ? updatedUser : u)));
-      // Se stiamo aggiornando l'utente attualmente loggato
       if (user && user.id === id) {
         setUser({ ...user, ...userData, updatedAt: new Date().toISOString() });
       }
@@ -206,7 +227,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return false;
       }
       setUsers(prev => prev.filter(u => u.id !== id));
-      // Se l'utente eliminato è quello loggato
       if (user && user.id === id) {
         logout();
       }

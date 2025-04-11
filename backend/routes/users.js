@@ -6,7 +6,7 @@ import firestore from '../firebase.js';
 
 const router = express.Router();
 
-// Get all users (per gestione admin)
+// Endpoint per recuperare tutti gli utenti (gestione admin)
 router.get('/', async (req, res) => {
   try {
     const usersSnapshot = await firestore.collection('users').get();
@@ -21,7 +21,21 @@ router.get('/', async (req, res) => {
   }
 });
 
-// Update a user
+// **Nuovo Endpoint**: Recupera un utente per ID
+router.get('/:id', async (req, res) => {
+  try {
+    const user = await getUserById(req.params.id);
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+    res.json(user);
+  } catch (err) {
+    console.error('Error fetching user:', err);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Endpoint per aggiornare un utente
 router.put('/:id', async (req, res) => {
   try {
     const { oldPassword, newPassword, ...rest } = req.body;
@@ -45,7 +59,7 @@ router.put('/:id', async (req, res) => {
   }
 });
 
-// Delete a user
+// Endpoint per eliminare un utente
 router.delete('/:id', async (req, res) => {
   try {
     await deleteUser(req.params.id);
