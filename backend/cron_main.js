@@ -53,7 +53,7 @@ cron.schedule('*/3 * * * *', () => {
 });
 
 // Pianifica l'esecuzione di firestore_capacity_trends_cleanup.py ogni giorno alle 1:00 AM
-cron.schedule('25 20 * * *', () => {
+cron.schedule('26 20 * * *', () => {
   console.log('[CRON_MAIN] Starting firestore_capacity_trends_cleanup.py at 1:00 AM');
   
   // Imposta il percorso al file firestore_capacity_trends_cleanup.py
