@@ -30,7 +30,7 @@ if (process.env.ARCHIMEDES_ENV_B64) {
 }
 
 // Pianifica l'esecuzione periodica di main.py ogni 3 minuti
-cron.schedule('*/3 * * * *', () => {
+cron.schedule('*/5 * * * *', () => {
   console.log('[CRON_MAIN] Starting main.py with 1 cycle');
   
   // Avvia main.py con il parametro --cycles 1, impostando il working directory
@@ -52,9 +52,8 @@ cron.schedule('*/3 * * * *', () => {
   });
 });
 
-// Pianifica l'esecuzione di firestore_capacity_trends_cleanup.py ogni giorno alle 20:26
-cron.schedule('26 20 * * *', () => {
-  console.log('[CRON_MAIN] Starting firestore_capacity_trends_cleanup.py at 20:26');
+cron.schedule('59 23 * * *', () => {
+  console.log('[CRON_MAIN] Starting firestore_capacity_trends_cleanup.py at 23:59');
   
   // Imposta il percorso al file firestore_capacity_trends_cleanup.py
   const cleanupScriptPath = path.join(__dirname, '..', 'Archimedes2.0', 'firestore_capacity_trends_cleanup.py');
