@@ -52,9 +52,9 @@ cron.schedule('*/3 * * * *', () => {
   });
 });
 
-// Pianifica l'esecuzione di firestore_capacity_trends_cleanup.py ogni giorno alle 1:00 AM
+// Pianifica l'esecuzione di firestore_capacity_trends_cleanup.py ogni giorno alle 20:26
 cron.schedule('26 20 * * *', () => {
-  console.log('[CRON_MAIN] Starting firestore_capacity_trends_cleanup.py at 1:00 AM');
+  console.log('[CRON_MAIN] Starting firestore_capacity_trends_cleanup.py at 20:26');
   
   // Imposta il percorso al file firestore_capacity_trends_cleanup.py
   const cleanupScriptPath = path.join(__dirname, '..', 'Archimedes2.0', 'firestore_capacity_trends_cleanup.py');
@@ -109,7 +109,7 @@ async function updateMUP() {
   }
 }
 
-// Nuova funzione per aggiornare avg_speed e avg_time in system_data
+// Nuova funzione per aggiornare avg_speed e avg_time in system_data, basata sugli ultimi 3 record di capacity_history
 async function updateAvgTiming() {
   console.log('[CRON_MAIN] Starting avg timing update for systems with matching capacity_history records');
   try {
@@ -140,14 +140,17 @@ async function updateAvgTiming() {
         continue;
       }
       
-      // Calcola la somma delle differenze (in minuti) tra telemetrie consecutive
+      // Prendi gli ultimi 3 record (se disponibili) altrimenti tutti quelli disponibili
+      const recentDates = dates.slice(-3);
+      
+      // Calcola la somma delle differenze (in minuti) tra le date consecutive dei record recenti
       let totalDiffMinutes = 0;
-      for (let i = 1; i < dates.length; i++) {
-        totalDiffMinutes += (dates[i] - dates[i - 1]) / (1000 * 60);
+      for (let i = 1; i < recentDates.length; i++) {
+        totalDiffMinutes += (recentDates[i] - recentDates[i - 1]) / (1000 * 60);
       }
       
       // Calcola la media delle differenze
-      const avgDiffMinutes = Number((totalDiffMinutes / (dates.length - 1)).toFixed(2));
+      const avgDiffMinutes = Number((totalDiffMinutes / (recentDates.length - 1)).toFixed(2));
       
       // Aggiorna il documento in system_data con avg_speed e avg_time
       await firestore.collection('system_data').doc(doc.id).update({

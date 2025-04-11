@@ -110,27 +110,30 @@ class Main(BaseModel):
         try:
             # Update Firestore documents for system data
             for idx, row in df_systems.iterrows():
-                # Build the document ID based on hostid and pool.
-                # If "pool" is missing (NaN), use only hostid.
+                # Costruisci l'ID del documento basato su hostid e pool
                 if pd.isna(row['pool']):
                     doc_id = f"{row['hostid']}"
                 else:
                     doc_id = f"{row['hostid']}_{row['pool']}"
                 
-                # Prepare the complete document data from the DataFrame row
+                # Prepara i dati completi dalla riga del DataFrame
                 full_doc_data = row.to_dict()
                 
-                # Get a reference to the Firestore document
-                doc_ref = db.collection("system_data").document(doc_id)
-                current_doc = doc_ref.get()
+                # Definisci i campi specifici da aggiornare in system_data:
+                update_fields = {
+                    "used_snap": full_doc_data.get("used_snap"),
+                    "used": full_doc_data.get("used"),
+                    "sending_telemetry": full_doc_data.get("sending_telemetry"),
+                    "perc_used": full_doc_data.get("perc_used"),
+                    "perc_snap": full_doc_data.get("perc_snap"),
+                    "last_date": full_doc_data.get("last_date"),
+                    "avail": full_doc_data.get("avail")
+                }
                 
-                if current_doc.exists:
-                    # If the document already exists, update only the "sending_telemetry" field
-                    update_data = {"sending_telemetry": full_doc_data.get("sending_telemetry")}
-                    doc_ref.set(update_data, merge=True)
-                else:
-                    # If the document does not exist, create it with the full data
-                    doc_ref.set(full_doc_data)
+                # Ottieni il riferimento al documento Firestore e aggiorna (merge=True per aggiornare solo i campi specificati)
+                doc_ref = db.collection("system_data").document(doc_id)
+                doc_ref.set(update_fields, merge=True)
+                logging.info(f"Firestore document {doc_id} updated with fields: {update_fields}")
             logging.info("Firestore system_data update completed")
         except Exception as e:
             logging.error("Error updating Firestore system_data: {}".format(e))
