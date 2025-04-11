@@ -107,6 +107,43 @@ class Main(BaseModel):
             logging.error("Error updating capacity_history: {}".format(e))
         # ------------------------------------------------------------------------------
 
+        # ------------------------------------------------------------------------------
+        # Nuovo blocco: eliminazione dei documenti in capacity_history più vecchi di 2 ore
+        # Utilizziamo la tecnica di prendere per ogni gruppo (hostid, pool) il documento più recente e calcolare il cutoff = max_date - 2 ore.
+        try:
+            # Scarichiamo tutti i documenti dalla collection capacity_history
+            capacity_docs = list(db.collection("capacity_history").stream())
+            # Raggruppiamo per (hostid, pool)
+            groups = {}
+            for doc in capacity_docs:
+                data = doc.to_dict()
+                hostid = data.get("hostid")
+                pool = data.get("pool")
+                key = (hostid, pool)
+                # Convertiamo la data; assumiamo formato '%Y-%m-%d %H:%M:%S'
+                try:
+                    doc_date = pd.to_datetime(data.get("date"), format='%Y-%m-%d %H:%M:%S')
+                except Exception as ex:
+                    logging.error(f"Error parsing date for capacity_history document {doc.id}: {ex}")
+                    continue
+                if key not in groups:
+                    groups[key] = []
+                groups[key].append((doc, doc_date))
+            
+            # Per ogni gruppo, calcoliamo la data cutoff come max_date - 2 ore ed eliminiamo i documenti antecedenti
+            for key, docs in groups.items():
+                # Troviamo la data più recente per questo gruppo
+                max_date = max(dt for (_, dt) in docs)
+                cutoff_dt = max_date - pd.Timedelta(hours=2)
+                for (doc, doc_date) in docs:
+                    if doc_date < cutoff_dt:
+                        doc.reference.delete()
+                        logging.info(f"Deleted capacity_history document {doc.id} (date: {doc_date}) for group {key} because it is older than cutoff {cutoff_dt}")
+            logging.info("Deletion of capacity_history documents older than cutoff completed")
+        except Exception as e:
+            logging.error("Error during deletion in capacity_history: {}".format(e))
+        # ------------------------------------------------------------------------------
+
         try:
             # Update Firestore documents for system data
             for idx, row in df_systems.iterrows():
@@ -143,7 +180,6 @@ class Main(BaseModel):
             # Delete documents from "system_data" collection that do not have '_' in their document ID
             docs = db.collection("system_data").stream()
             for doc in docs:
-                # If the document id does not contain an underscore, delete the document
                 if "_" not in doc.id:
                     doc.reference.delete()
                     logging.info(f"Deleted document {doc.id} because it does not contain '_'")
