@@ -615,14 +615,11 @@ function SystemDetail() {
   const yMaxValue = isPerc ? 100 : capacityTotalConv;
 
   // ==================== CONFIGURAZIONE DATI DEI GRAFICI ====================
-  // Suffisso per tooltip ed assi in base all'unità selezionata
   const unitSuffix = usageUnit === 'perc_used' ? '%' : (usageUnit === 'used_GB' ? 'GB' : usageUnit === 'used_GiB' ? 'GiB' : 'TB');
-
   const filteredTelemetry = getTimeRangeData<TelemetryData>(stitchedTelemetry, timeRange);
   const poolRecords = allRecords.filter((r) => r.pool === selectedPool);
   poolRecords.sort((a, b) => new Date(b.last_date).getTime() - new Date(a.last_date).getTime());
 
-  // Dati per il grafico Usage History: la proprietà segment cambia il colore in #f8485e se supera la soglia del 70%
   const historyChartData = {
     datasets: [
       {
@@ -645,7 +642,6 @@ function SystemDetail() {
     ]
   };
 
-  // Dati per il grafico Usage Forecast
   const forecastChartData =
     usageUnit === 'perc_used'
       ? {
@@ -696,7 +692,7 @@ function SystemDetail() {
             },
             {
               label: 'Forecast',
-              data: computeForecastPointsUsed(filteredTelemetry, systemData!).map((p) => ({ x: p.date, y: convertValue(p.forecasted_usage, usageUnit) })),
+              data: systemData ? computeForecastPointsUsed(filteredTelemetry, systemData).map((p) => ({ x: p.date, y: convertValue(p.forecasted_usage, usageUnit) })) : [],
               borderColor: '#f8485e',
               backgroundColor: '#f8485e',
               tension: 0.2,
@@ -758,7 +754,6 @@ function SystemDetail() {
   const displayedHistory = chartHistBlur ? dummyHistory : historyChartData;
   const displayedForecast = chartForeBlur ? dummyForecast : forecastChartData;
 
-  // Configurazione delle opzioni dei grafici
   const chartOptions: ChartOptions<'line'> = {
     responsive: true,
     maintainAspectRatio: false,
@@ -833,16 +828,35 @@ function SystemDetail() {
     interaction: { intersect: false, mode: 'index' }
   };
 
-  // Ricalcolo forecastData per la prediction in percentuale (non cambia in base all'unità grafica)
-  const fc: ForecastData = {
-    unitId: systemData!.unit_id,
-    pool: systemData!.pool,
-    time_to_70: calculateForecastDays(removeDataBeforeSignificantDrop(filteredTelemetry, 30), 70),
-    time_to_80: calculateForecastDays(removeDataBeforeSignificantDrop(filteredTelemetry, 30), 80),
-    time_to_90: calculateForecastDays(removeDataBeforeSignificantDrop(filteredTelemetry, 30), 90),
-    current_usage: systemData!.perc_used,
-    growth_rate: calculateDailyGrowth(removeDataBeforeSignificantDrop(filteredTelemetry, 30))
-  };
+  // Ricalcolo forecastData per la prediction in percentuale
+  const fc: ForecastData | null = systemData
+    ? {
+        unitId: systemData.unit_id,
+        pool: systemData.pool,
+        time_to_70: calculateForecastDays(removeDataBeforeSignificantDrop(filteredTelemetry, 30), 70),
+        time_to_80: calculateForecastDays(removeDataBeforeSignificantDrop(filteredTelemetry, 30), 80),
+        time_to_90: calculateForecastDays(removeDataBeforeSignificantDrop(filteredTelemetry, 30), 90),
+        current_usage: systemData.perc_used,
+        growth_rate: calculateDailyGrowth(removeDataBeforeSignificantDrop(filteredTelemetry, 30))
+      }
+    : null;
+
+  // Controllo preliminare: se l'app è in caricamento oppure i dati sono assenti, mostro un messaggio opportuno
+  if (isLoading) {
+    return (
+      <div className="flex justify-center items-center h-full">
+        <LoadingDots />
+      </div>
+    );
+  }
+
+  if (error) {
+    return <div className="text-red-500">{error}</div>;
+  }
+
+  if (!systemData) {
+    return <div className="text-yellow-500">No system data available.</div>;
+  }
 
   return (
     <div className="space-y-6">
@@ -850,22 +864,22 @@ function SystemDetail() {
       <div className="flex justify-between items-center">
         <div className="flex items-center gap-4">
           <button
-            onClick={() => navigate(`/systems/company/${systemData!.company}`)}
+            onClick={() => navigate(`/systems/company/${systemData.company}`)}
             className="p-2 hover:bg-[#0b3c43] rounded-full transition-colors"
           >
             <ArrowLeft className="w-6 h-6 text-[#22c1d4]" />
           </button>
           <div>
             <div className="flex items-center gap-2">
-              <h1 className="text-2xl font-bold">{systemData!.name}</h1>
+              <h1 className="text-2xl font-bold">{systemData.name}</h1>
               <span className="text-[#eeeeee]/60">•</span>
               <div className="flex items-center gap-1 text-[#eeeeee]/60">
                 <Building2 className="w-4 h-4" />
-                {systemData!.company}
+                {systemData.company}
               </div>
             </div>
             <p className="text-[#eeeeee]/60">
-              Unit ID: {systemData!.unit_id} — Pool: {systemData!.pool}
+              Unit ID: {systemData.unit_id} — Pool: {systemData.pool}
             </p>
           </div>
         </div>
@@ -908,7 +922,7 @@ function SystemDetail() {
                 onClick={() => setSelectedHostid(hRec.hostid)}
                 className="text-left"
                 style={{
-                  border: isSelected ? '2px solid#f8485e' : '1px solid rgba(34,193,212,0.2)',
+                  border: isSelected ? '2px solid #f8485e' : '1px solid rgba(34,193,212,0.2)',
                   background: '#06272b',
                   borderRadius: '0.5rem',
                   padding: '1rem',

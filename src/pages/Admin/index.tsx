@@ -23,6 +23,11 @@ const Admin: React.FC = () => {
   const [users, setUsers] = useState<User[]>([]);
   const [isAddingUser, setIsAddingUser] = useState(false);
   const [editingUserId, setEditingUserId] = useState<string | null>(null);
+
+  /**
+   * Questo stato conterrà i campi che l'utente sta attualmente modificando.
+   * Se la password è vuota, significa che non verrà toccata nella fase di update.
+   */
   const [editUser, setEditUser] = useState<Partial<User> | null>(null);
 
   const [searchTerm, setSearchTerm] = useState('');
@@ -73,21 +78,33 @@ const Admin: React.FC = () => {
     }
   };
 
+  /**
+   * Funzione chiamata quando si clicca su "Edit" per un utente.
+   * NOTA BENE: Rimuoviamo la password dall'oggetto in modo che,
+   * se non impostata dall'utente, non venga inviata al backend.
+   */
   const handleEditUser = (user: User) => {
     setEditingUserId(user.id);
-    setEditUser({ ...user });
+    const userWithoutPassword = { ...user };
+    delete userWithoutPassword.password; // Rimuoviamo il campo password
+    setEditUser(userWithoutPassword);
   };
 
+  /**
+   * Salvataggio delle modifiche. Se la password è vuota o falsy,
+   * la eliminiamo dal payload in modo da non modificarla sul server.
+   */
   const handleSaveEdit = async () => {
     if (!editUser || !editingUserId) return;
 
-    // Gestione del campo password
     const dataToUpdate = { ...editUser };
+
+    // Se la password è vuota, rimuoviamo il campo
     if (!dataToUpdate.password) {
       delete dataToUpdate.password;
     }
 
-    // Conversione delle permissions in un array di stringhe
+    // Conversione delle permissions in un array di stringhe (se presente)
     dataToUpdate.permissions = dataToUpdate.permissions?.map((p: any) =>
       typeof p === 'object' ? p.id : p
     ) || [];
@@ -190,45 +207,7 @@ const Admin: React.FC = () => {
         </div>
       </div>
 
-      <div className="bg-[#0b3c43] rounded-lg p-4 shadow-lg">
-        <div className="flex flex-col md:flex-row gap-4">
-          <div className="flex-1 relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-[#eeeeee]/60" />
-            <input
-              type="text"
-              placeholder="Search users..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full pl-10 pr-4 py-2 bg-[#06272b] rounded-lg border border-[#22c1d4]/20 focus:outline-none focus:border-[#22c1d4]"
-            />
-          </div>
-          <div>
-            <select
-              value={companyFilter}
-              onChange={(e) => setCompanyFilter(e.target.value)}
-              className="w-full md:w-auto px-4 py-2 bg-[#06272b] rounded-lg border border-[#22c1d4]/20 focus:outline-none focus:border-[#22c1d4]"
-            >
-              <option value="">All Companies</option>
-              {companies.filter(c => c !== 'all').map((company, i) => (
-                <option key={i} value={company}>{company}</option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <select
-              value={roleFilter}
-              onChange={(e) => setRoleFilter(e.target.value)}
-              className="w-full md:w-auto px-4 py-2 bg-[#06272b] rounded-lg border border-[#22c1d4]/20 focus:outline-none focus:border-[#22c1d4]"
-            >
-              <option value="">All Roles</option>
-              <option value="admin">Admin</option>
-              <option value="customer">Customer</option>
-              <option value="extra">Extra</option>
-            </select>
-          </div>
-        </div>
-      </div>
-
+      {/* Sezione per aggiungere un nuovo utente */}
       {isAddingUser && (
         <div className="bg-[#0b3c43] rounded-lg p-6 shadow-lg">
           <h2 className="text-xl font-semibold mb-4">Add New User</h2>
@@ -323,6 +302,7 @@ const Admin: React.FC = () => {
         </div>
       )}
 
+      {/* Sezione elenco utenti */}
       <div className="bg-[#0b3c43] rounded-lg p-6 shadow-lg">
         <h2 className="text-xl font-semibold mb-4">Users</h2>
         {filteredUsers.length === 0 ? (
@@ -366,7 +346,10 @@ const Admin: React.FC = () => {
                         <select
                           value={editUser?.subscription || 'None'}
                           onChange={(e) =>
-                            setEditUser(prev => prev ? { ...prev, subscription: e.target.value as 'None' | 'Essential' | 'Advantage' | 'Premiere' } : null)
+                            setEditUser(prev => prev ? {
+                              ...prev,
+                              subscription: e.target.value as 'None' | 'Essential' | 'Advantage' | 'Premiere'
+                            } : null)
                           }
                           className="w-full bg-[#0b3c43] rounded-lg px-4 py-2 border border-[#22c1d4]/20"
                         >
@@ -444,7 +427,6 @@ const Admin: React.FC = () => {
                       >
                         <Edit className="w-5 h-5 text-[#22c1d4]" />
                       </button>
-                      {/* Pulsante per il reset del walkthrough rimosso in visualizzazione non-edit */}
                       <button
                         onClick={() => handleDeleteUser(user.id)}
                         className="p-2 hover:bg-[#0b3c43] rounded-full transition-colors"
