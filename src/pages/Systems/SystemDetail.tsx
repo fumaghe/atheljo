@@ -1,11 +1,12 @@
 // src/pages/Systems/SystemDetail.tsx
 import 'chart.js/auto';
 import 'chartjs-adapter-date-fns';
-import React, { useEffect, useState, useMemo } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Line } from 'react-chartjs-2';
 import { subDays } from 'date-fns';
-import { ChartOptions } from 'chart.js';
+import { ChartOptions, Chart, registerables } from 'chart.js';
+import annotationPlugin from 'chartjs-plugin-annotation';
 import {
   ArrowLeft,
   Activity,
@@ -30,21 +31,24 @@ import StateVectorChart from './StateVectorChart';
 import LoadingDots from '../Dashboard/components/LoadingDots';
 import { calculateSystemHealthScore } from '../../utils/calculateSystemHealthScore';
 
-// =============== INTERFACCE ===============
+// Registra Chart.js e il plugin per le annotazioni
+Chart.register(...registerables, annotationPlugin);
+
+// =============== INTERFACCIE ===============
 interface SystemData {
   name: string;
   hostid: string;
   pool: string;
   unit_id: string;
   type: string;
-  used: number;
+  used: number; // in GB
   avail: number;
   used_snap: number;
   perc_used: number;
   perc_snap: number;
   sending_telemetry: boolean;
-  first_date: string; // "2018-03-28 19:23:30"
-  last_date: string; // "2023-03-05 12:31:21"
+  first_date: string; // "2018-03-28T19:23:30"
+  last_date: string;  // "2023-03-05T12:31:21"
   MUP: number;
   avg_speed: number;
   avg_time: number;
@@ -52,10 +56,10 @@ interface SystemData {
 }
 
 interface TelemetryData {
-  date: string; // es. "2018-03-28 19:23:30"
+  date: string; // es. "2018-03-28T19:23:30"
   unit_id: string;
   pool: string;
-  used: number;
+  used: number; // in GB
   total_space: number;
   perc_used: number;
   snap: number;
@@ -107,16 +111,6 @@ const unitCache: Record<string, UnitCache> = {};
 const CACHE_DURATION = 20 * 60 * 1000; // 20 minuti
 
 // =============== FUNZIONI DI SUPPORTO PER IL FORECAST ===============
-
-/**
- * removeDataBeforeSignificantDrop:
- * Restituisce un sottoinsieme dei dati, eliminando quelli antecedenti il primo crollo significativo.
- * Il taglio viene usato esclusivamente per calcolare i giorni di forecast.
- *
- * @param telemetry  L'array ordinato di TelemetryData.
- * @param dropThreshold  La soglia per un "crollo significativo" (default: 30 punti percentuali).
- * @returns TelemetryData[]  L'array con i dati a partire dal punto in cui il valore comincia a crescere nuovamente.
- */
 function removeDataBeforeSignificantDrop(
   telemetry: TelemetryData[],
   dropThreshold: number = 30
@@ -131,13 +125,10 @@ function removeDataBeforeSignificantDrop(
       break;
     }
   }
-  // Se non viene trovato un crollo significativo, restituisce l'array intero
   if (dropIndex === -1) return telemetry;
-  // Restituisce l'array dal punto successivo al drop
   return telemetry.slice(dropIndex + 1);
 }
 
-// Calcola il tasso giornaliero medio (in % di crescita) utilizzando fino a 365 giorni (se disponibili)
 function calculateDailyGrowth(telemetry: TelemetryData[]): number {
   if (telemetry.length < 2) return 0;
   const maxLookBackDays = 365;
@@ -153,10 +144,21 @@ function calculateDailyGrowth(telemetry: TelemetryData[]): number {
   return Number((growth / days).toFixed(2));
 }
 
-// Calcola il numero di giorni necessari perché venga raggiunta una certa soglia, partendo dall'ultimo dato.
-// Se la soglia (70 o 80) è già stata raggiunta, restituisce -2 (per mostrare l'icona di alert).
-// Per soglia 90, se già raggiunta, restituisce 0.
-// Se il numero di giorni stimato supera 5000, restituisce 5001 (che verrà mostrato come ">5000").
+function calculateDailyGrowthUsed(telemetry: TelemetryData[]): number {
+  if (telemetry.length < 2) return 0;
+  const maxLookBackDays = 365;
+  const lastDate = new Date(telemetry[telemetry.length - 1].date);
+  const cutoffDate = new Date(lastDate.getTime() - maxLookBackDays * 24 * 60 * 60 * 1000);
+  const filtered = telemetry.filter(t => new Date(t.date) >= cutoffDate);
+  const dataToUse = filtered.length >= 2 ? filtered : telemetry;
+  const first = new Date(dataToUse[0].date);
+  const last = new Date(dataToUse[dataToUse.length - 1].date);
+  const days = (last.getTime() - first.getTime()) / (1000 * 60 * 60 * 24);
+  if (days <= 0) return 0;
+  const growth = dataToUse[dataToUse.length - 1].used - dataToUse[0].used;
+  return Number((growth / days).toFixed(2));
+}
+
 function calculateForecastDays(telemetry: TelemetryData[], threshold: number): number {
   if (telemetry.length < 2) return -1;
   const dailyGrowth = calculateDailyGrowth(telemetry);
@@ -170,22 +172,14 @@ function calculateForecastDays(telemetry: TelemetryData[], threshold: number): n
   return days;
 }
 
-// Interfaccia per i punti forecast per il grafico Usage Forecast
-interface ComputedForecastPoint {
-  date: string;
-  forecasted_percentage: number;
-}
-
-// Crea punti forecast per le soglie (70, 80, 90) usando i dati di telemetria.
-// NOTA: Per le soglie 70 e 80, se il valore corrente è già superiore, NON aggiunge il punto.
-function computeForecastPoints(telemetry: TelemetryData[], thresholds: number[]): ComputedForecastPoint[] {
+function computeForecastPoints(telemetry: TelemetryData[], thresholds: number[]): { date: string; forecasted_percentage: number }[] {
   if (telemetry.length === 0) return [];
   const dailyGrowth = calculateDailyGrowth(telemetry);
   if (dailyGrowth <= 0) return [];
   const lastEntry = telemetry[telemetry.length - 1];
   const lastDate = new Date(lastEntry.date);
   const currentUsage = lastEntry.perc_used;
-  let forecast: ComputedForecastPoint[] = [];
+  let forecast: { date: string; forecasted_percentage: number }[] = [];
   thresholds.forEach((th) => {
     if (th < 90 && currentUsage >= th) return;
     const daysToReach = (th - currentUsage) / dailyGrowth;
@@ -196,6 +190,37 @@ function computeForecastPoints(telemetry: TelemetryData[], thresholds: number[])
     });
   });
   return forecast;
+}
+
+function computeForecastPointsUsed(telemetry: TelemetryData[], systemData: SystemData): { date: string; forecasted_usage: number }[] {
+  if (telemetry.length === 0) return [];
+  const dailyGrowthUsed = calculateDailyGrowthUsed(telemetry);
+  if (dailyGrowthUsed <= 0) return [];
+  const lastEntry = telemetry[telemetry.length - 1];
+  const lastDate = new Date(lastEntry.date);
+  const currentUsed = lastEntry.used;
+  const totalCapacity = systemData.used + systemData.avail; // in GB
+  let forecast: { date: string; forecasted_usage: number }[] = [];
+  [70, 80, 90].forEach((th) => {
+    const thresholdAbsolute = (th * totalCapacity) / 100;
+    if (th < 90 && currentUsed >= thresholdAbsolute) return;
+    if (th === 90 && currentUsed >= thresholdAbsolute) {
+      forecast.push({ date: lastEntry.date, forecasted_usage: thresholdAbsolute });
+    } else {
+      const daysToReach = (thresholdAbsolute - currentUsed) / dailyGrowthUsed;
+      const forecastDate = new Date(lastDate.getTime() + daysToReach * 24 * 60 * 60 * 1000);
+      forecast.push({ date: forecastDate.toISOString(), forecasted_usage: thresholdAbsolute });
+    }
+  });
+  return forecast;
+}
+
+// Funzione di conversione: dato un valore in GB, restituisce il valore convertito in base all'unità scelta.
+function convertValue(value: number, unit: string): number {
+  if (unit === 'used_GB') return value;
+  if (unit === 'used_GiB') return value / 1.07374;
+  if (unit === 'used_TB') return value / 1000;
+  return value;
 }
 
 // =============== COMPONENTE PRINCIPALE ===============
@@ -230,6 +255,8 @@ function SystemDetail() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [timeRange, setTimeRange] = useState('1y');
+  // Stato per l'unità: "perc_used", "used_GB", "used_GiB", "used_TB"
+  const [usageUnit, setUsageUnit] = useState<string>('perc_used');
 
   // =============== 1) Caricamento dati e caching ===============
   useEffect(() => {
@@ -318,7 +345,6 @@ function SystemDetail() {
             latestRecord = r;
           }
         }
-        const refHostid = latestRecord.hostid || '';
         const uniqueHostids = Array.from(new Set(loadedRecords.map(r => r.hostid)));
         const telemQ = query(
           collection(firestore, 'capacity_trends'),
@@ -441,10 +467,7 @@ function SystemDetail() {
       finalTelemetry.push(...sub);
     }
     finalTelemetry.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
-    // Imposto i dati per il grafico (stitch senza modifiche)
     setStitchedTelemetry(finalTelemetry);
-    // Per il calcolo dei giorni, usiamo una copia dei dati filtrata: 
-    // rimuoviamo solo per la prediction i dati precedenti a un crollo significativo.
     const forecastTelemetry = removeDataBeforeSignificantDrop(finalTelemetry, 30);
     const fc: ForecastData = {
       unitId: currentSystem.unit_id,
@@ -581,43 +604,40 @@ function SystemDetail() {
     return data.filter((point) => new Date(point.date).getTime() >= cutoff.getTime());
   }
 
-  // =============== RENDER ===============
-  if (isLoading) {
-    return (
-      <div className="flex items-center justify-center h-[60vh]">
-        <LoadingDots />
-      </div>
-    );
-  }
-  if (error) {
-    return (
-      <div className="flex items-center justify-center h-[60vh]">
-        <div className="text-[#f8485e] text-xl">{error}</div>
-      </div>
-    );
-  }
-  if (!systemData || !healthScore) {
-    return (
-      <div className="flex items-center justify-center h-[60vh]">
-        <div className="text-[#f8485e] text-xl">
-          <LoadingDots />
-        </div>
-      </div>
-    );
-  }
+  // ==================== CALCOLO VALORI PER LE SOGLIE E L'ASSE Y ====================
+  const isPerc = usageUnit === 'perc_used';
+  const capacityTotal = systemData ? systemData.used + systemData.avail : 0;
+  // Se non è percentuale, convertiamo il totale nella unità scelta (altrimenti rimane in GB)
+  const capacityTotalConv = isPerc ? capacityTotal : convertValue(capacityTotal, usageUnit);
+  const threshold70 = isPerc ? 70 : capacityTotalConv * 0.7;
+  const threshold80 = isPerc ? 80 : capacityTotalConv * 0.8;
+  const threshold90 = isPerc ? 90 : capacityTotalConv * 0.9;
+  const yMaxValue = isPerc ? 100 : capacityTotalConv;
+
+  // ==================== CONFIGURAZIONE DATI DEI GRAFICI ====================
+  // Suffisso per tooltip ed assi in base all'unità selezionata
+  const unitSuffix = usageUnit === 'perc_used' ? '%' : (usageUnit === 'used_GB' ? 'GB' : usageUnit === 'used_GiB' ? 'GiB' : 'TB');
 
   const filteredTelemetry = getTimeRangeData<TelemetryData>(stitchedTelemetry, timeRange);
   const poolRecords = allRecords.filter((r) => r.pool === selectedPool);
   poolRecords.sort((a, b) => new Date(b.last_date).getTime() - new Date(a.last_date).getTime());
 
-  // Dati per il grafico Usage History (dati completi)
+  // Dati per il grafico Usage History: la proprietà segment cambia il colore in #f8485e se supera la soglia del 70%
   const historyChartData = {
     datasets: [
       {
         label: 'Usage',
-        data: filteredTelemetry.map((p) => ({ x: p.date, y: p.perc_used })),
-        borderColor: '#22c1d4',
-        backgroundColor: 'rgba(34,193,212,0.1)',
+        data:
+          usageUnit === 'perc_used'
+            ? filteredTelemetry.map((p) => ({ x: p.date, y: p.perc_used }))
+            : filteredTelemetry.map((p) => ({ x: p.date, y: convertValue(p.used, usageUnit) })),
+        segment: {
+          borderColor: (ctx: any) =>
+            (ctx.p0.parsed.y >= threshold70 || ctx.p1.parsed.y >= threshold70)
+              ? '#f8485e'
+              : '#22c1d4'
+        },
+        backgroundColor: usageUnit === 'perc_used' ? 'rgba(34,193,212,0.1)' : 'rgba(34,193,212,0.2)',
         tension: 0.2,
         pointRadius: 0,
         fill: true
@@ -625,35 +645,67 @@ function SystemDetail() {
     ]
   };
 
-  // Per il forecast, creiamo una copia dei dati su cui applicare il taglio sul drop,
-  // in modo da non alterare i dati visualizzati nei grafici.
-  const forecastTelemetry = removeDataBeforeSignificantDrop(filteredTelemetry, 30);
-
-  // Punti forecast per il grafico Usage Forecast
-  const computedForecastPoints = computeForecastPoints(filteredTelemetry, [70, 80, 90]);
-  const forecastChartData = {
-    datasets: [
-      {
-        label: 'Historical',
-        data: filteredTelemetry.map((p) => ({ x: p.date, y: p.perc_used })),
-        borderColor: '#22c1d4',
-        backgroundColor: 'rgba(34,193,212,0.1)',
-        tension: 0.2,
-        pointRadius: 0,
-        fill: true
-      },
-      {
-        label: 'Forecast',
-        data: computedForecastPoints.map((p) => ({ x: p.date, y: p.forecasted_percentage })),
-        borderColor: '#f08080',
-        backgroundColor: '#f08080',
-        tension: 0.2,
-        pointRadius: 5,
-        fill: false,
-        borderDash: [5, 5]
-      }
-    ]
-  };
+  // Dati per il grafico Usage Forecast
+  const forecastChartData =
+    usageUnit === 'perc_used'
+      ? {
+          datasets: [
+            {
+              label: 'Historical',
+              data: filteredTelemetry.map((p) => ({ x: p.date, y: p.perc_used })),
+              segment: {
+                borderColor: (ctx: any) =>
+                  (ctx.p0.parsed.y >= threshold70 || ctx.p1.parsed.y >= threshold70)
+                    ? '#f8485e'
+                    : '#22c1d4'
+              },
+              borderColor: '#22c1d4',
+              backgroundColor: 'rgba(34,193,212,0.1)',
+              tension: 0.2,
+              pointRadius: 0,
+              fill: true
+            },
+            {
+              label: 'Forecast',
+              data: computeForecastPoints(filteredTelemetry, [70, 80, 90]).map((p) => ({ x: p.date, y: p.forecasted_percentage })),
+              borderColor: '#f8485e',
+              backgroundColor: '#f8485e',
+              tension: 0.2,
+              pointRadius: 5,
+              fill: false,
+              borderDash: [5, 5]
+            }
+          ]
+        }
+      : {
+          datasets: [
+            {
+              label: 'Historical',
+              data: filteredTelemetry.map((p) => ({ x: p.date, y: convertValue(p.used, usageUnit) })),
+              segment: {
+                borderColor: (ctx: any) =>
+                  (ctx.p0.parsed.y >= threshold70 || ctx.p1.parsed.y >= threshold70)
+                    ? '#f8485e'
+                    : '#22c1d4'
+              },
+              borderColor: '#22c1d4',
+              backgroundColor: 'rgba(34,193,212,0.1)',
+              tension: 0.2,
+              pointRadius: 0,
+              fill: true
+            },
+            {
+              label: 'Forecast',
+              data: computeForecastPointsUsed(filteredTelemetry, systemData!).map((p) => ({ x: p.date, y: convertValue(p.forecasted_usage, usageUnit) })),
+              borderColor: '#f8485e',
+              backgroundColor: '#f8485e',
+              tension: 0.2,
+              pointRadius: 5,
+              fill: false,
+              borderDash: [5, 5]
+            }
+          ]
+        };
 
   const dummyHistory = {
     datasets: [
@@ -706,17 +758,18 @@ function SystemDetail() {
   const displayedHistory = chartHistBlur ? dummyHistory : historyChartData;
   const displayedForecast = chartForeBlur ? dummyForecast : forecastChartData;
 
+  // Configurazione delle opzioni dei grafici
   const chartOptions: ChartOptions<'line'> = {
     responsive: true,
     maintainAspectRatio: false,
     scales: {
       y: {
         beginAtZero: true,
-        max: 100,
+        max: yMaxValue,
         grid: { color: 'rgba(255,255,255,0.1)' },
         ticks: {
           color: '#fff',
-          callback: (val) => `${(val as number).toFixed(2)}%`
+          callback: (val) => `${(val as number).toFixed(2)}${unitSuffix}`
         }
       },
       x: {
@@ -744,7 +797,35 @@ function SystemDetail() {
         callbacks: {
           label: (context) => {
             const val = context.parsed.y ?? 0;
-            return `${context.dataset.label}: ${val.toFixed(2)}%`;
+            return `${context.dataset.label}: ${val.toFixed(2)}${unitSuffix}`;
+          }
+        }
+      },
+      annotation: {
+        annotations: {
+          threshold70: {
+            type: 'line',
+            yMin: threshold70,
+            yMax: threshold70,
+            borderColor: '#f8485e',
+            borderWidth: 2,
+            borderDash: [6, 6]
+          },
+          threshold80: {
+            type: 'line',
+            yMin: threshold80,
+            yMax: threshold80,
+            borderColor: '#f8485e',
+            borderWidth: 2,
+            borderDash: [6, 6]
+          },
+          threshold90: {
+            type: 'line',
+            yMin: threshold90,
+            yMax: threshold90,
+            borderColor: '#f8485e',
+            borderWidth: 2,
+            borderDash: [6, 6]
           }
         }
       }
@@ -752,21 +833,16 @@ function SystemDetail() {
     interaction: { intersect: false, mode: 'index' }
   };
 
-  // Calcolo dei forecast giorni, usando forecastTelemetry per la prediction
+  // Ricalcolo forecastData per la prediction in percentuale (non cambia in base all'unità grafica)
   const fc: ForecastData = {
-    unitId: systemData.unit_id,
-    pool: systemData.pool,
-    time_to_70: calculateForecastDays(forecastTelemetry, 70),
-    time_to_80: calculateForecastDays(forecastTelemetry, 80),
-    time_to_90: calculateForecastDays(forecastTelemetry, 90),
-    current_usage: systemData.perc_used,
-    growth_rate: calculateDailyGrowth(forecastTelemetry)
+    unitId: systemData!.unit_id,
+    pool: systemData!.pool,
+    time_to_70: calculateForecastDays(removeDataBeforeSignificantDrop(filteredTelemetry, 30), 70),
+    time_to_80: calculateForecastDays(removeDataBeforeSignificantDrop(filteredTelemetry, 30), 80),
+    time_to_90: calculateForecastDays(removeDataBeforeSignificantDrop(filteredTelemetry, 30), 90),
+    current_usage: systemData!.perc_used,
+    growth_rate: calculateDailyGrowth(removeDataBeforeSignificantDrop(filteredTelemetry, 30))
   };
-
-  // Imposto il forecastData solo per la prediction (non modifica i dati grafici)
-  // Se preferisci, questo calcolo può avvenire all'interno di un useEffect separato;
-  // qui viene fatto nel render per chiarezza.
-  // (Se necessiti di ulteriori ottimizzazioni, sposta la logica in un useEffect dedicato.)
 
   return (
     <div className="space-y-6">
@@ -774,22 +850,22 @@ function SystemDetail() {
       <div className="flex justify-between items-center">
         <div className="flex items-center gap-4">
           <button
-            onClick={() => navigate(`/systems/company/${systemData.company}`)}
+            onClick={() => navigate(`/systems/company/${systemData!.company}`)}
             className="p-2 hover:bg-[#0b3c43] rounded-full transition-colors"
           >
             <ArrowLeft className="w-6 h-6 text-[#22c1d4]" />
           </button>
           <div>
             <div className="flex items-center gap-2">
-              <h1 className="text-2xl font-bold">{systemData.name}</h1>
+              <h1 className="text-2xl font-bold">{systemData!.name}</h1>
               <span className="text-[#eeeeee]/60">•</span>
               <div className="flex items-center gap-1 text-[#eeeeee]/60">
                 <Building2 className="w-4 h-4" />
-                {systemData.company}
+                {systemData!.company}
               </div>
             </div>
             <p className="text-[#eeeeee]/60">
-              Unit ID: {systemData.unit_id} — Pool: {systemData.pool}
+              Unit ID: {systemData!.unit_id} — Pool: {systemData!.pool}
             </p>
           </div>
         </div>
@@ -881,8 +957,8 @@ function SystemDetail() {
           {healthHeadCan || healthHeadBlur ? (
             <div className="relative">
               <div className={`${healthHeadBlur ? 'blur-sm pointer-events-none' : ''} flex flex-col items-center`}>
-                <div className={getHealthScoreColorClass(healthScore.score, 'text-4xl font-bold')}>
-                  {healthHeadBlur ? '??' : healthScore.score}
+                <div className={getHealthScoreColorClass(healthScore!.score, 'text-4xl font-bold')}>
+                  {healthHeadBlur ? '??' : healthScore!.score}
                 </div>
                 <div className="text-sm text-[#eeeeee]/60">Health Score</div>
               </div>
@@ -896,26 +972,26 @@ function SystemDetail() {
         </div>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div className="space-y-4">
-            {healthScore.metrics
+            {healthScore!.metrics
               .filter((m) => m.name === 'Capacity')
               .map((m) => renderHealthMetric(m, capCan, capBlur))}
-            {healthScore.metrics
+            {healthScore!.metrics
               .filter((m) => m.name === 'Performance')
               .map((m) => renderHealthMetric(m, perfCan, perfBlur))}
           </div>
           <div className="space-y-4">
-            {healthScore.metrics
+            {healthScore!.metrics
               .filter((m) => m.name === 'Telemetry')
               .map((m) => renderHealthMetric(m, telemCan, telemBlur))}
-            {healthScore.metrics
+            {healthScore!.metrics
               .filter((m) => m.name === 'Snapshots')
               .map((m) => renderHealthMetric(m, snapCan, snapBlur))}
           </div>
           <div className="space-y-4">
-            {healthScore.metrics
+            {healthScore!.metrics
               .filter((m) => m.name === 'MUP')
               .map((m) => renderHealthMetric(m, mupCan, mupBlur))}
-            {healthScore.metrics
+            {healthScore!.metrics
               .filter((m) => m.name === 'Utilization')
               .map((m) => renderHealthMetric(m, utilCan, utilBlur))}
           </div>
@@ -957,21 +1033,34 @@ function SystemDetail() {
                 <TrendingUp className="w-6 h-6 text-[#22c1d4]" />
                 <h2 className="text-xl text-[#f8485e] font-semibold">Usage History</h2>
               </div>
-              <select
-                value={timeRange}
-                onChange={(e) => setTimeRange(e.target.value)}
-                className="bg-[#06272b] text-[#eeeeee] rounded px-3 py-1 border border-[#22c1d4]/20"
-                disabled={chartHistBlur}
-              >
-                <option value="1m">Last Month</option>
-                <option value="3m">Last 3 Months</option>
-                <option value="6m">Last 6 Months</option>
-                <option value="1y">Last Year</option>
-                <option value="all">All</option>
-              </select>
+              <div className="flex gap-3">
+                <select
+                  value={timeRange}
+                  onChange={(e) => setTimeRange(e.target.value)}
+                  className="bg-[#06272b] text-[#eeeeee] rounded px-3 py-1 border border-[#22c1d4]/20"
+                  disabled={chartHistBlur}
+                >
+                  <option value="1m">Last Month</option>
+                  <option value="3m">Last 3 Months</option>
+                  <option value="6m">Last 6 Months</option>
+                  <option value="1y">Last Year</option>
+                  <option value="all">All</option>
+                </select>
+                <select
+                  value={usageUnit}
+                  onChange={(e) => setUsageUnit(e.target.value)}
+                  className="bg-[#06272b] text-[#eeeeee] rounded px-3 py-1 border border-[#22c1d4]/20"
+                  disabled={chartHistBlur}
+                >
+                  <option value="perc_used">%</option>
+                  <option value="used_GB">GB</option>
+                  <option value="used_GiB">GiB</option>
+                  <option value="used_TB">TB</option>
+                </select>
+              </div>
             </div>
             <div className="h-[400px]">
-              <Line key={`history-${timeRange}`} data={displayedHistory} options={chartOptions} redraw />
+              <Line key={`history-${timeRange}-${usageUnit}`} data={displayedHistory} options={chartOptions} redraw />
             </div>
           </div>
           {chartHistBlur && (
@@ -994,7 +1083,7 @@ function SystemDetail() {
               <h2 className="text-xl text-[#f8485e] font-semibold">Usage Forecast</h2>
             </div>
             <div className="h-[400px]">
-              <Line key={`forecast-${timeRange}`} data={displayedForecast} options={chartOptions} redraw />
+              <Line key={`forecast-${timeRange}-${usageUnit}`} data={displayedForecast} options={chartOptions} redraw />
             </div>
           </div>
           {chartForeBlur && (
@@ -1063,7 +1152,6 @@ function SystemDetail() {
     } else if (daysValue === -1) {
       content = '?';
     } else if (daysValue === -2) {
-      // Soglia già raggiunta: mostra l'icona di alert
       content = <AlertTriangle className="w-6 h-6" />;
     } else if (daysValue >= 5001) {
       content = '>5000';
