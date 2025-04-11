@@ -86,7 +86,27 @@ class Main(BaseModel):
         except Exception as e:
             logging.error("Error in Firebase Admin SDK: {}".format(e))
             raise e
-        
+
+        # ------------------------------------------------------------------------------
+        # Nuovo blocco: aggiornamento della collection capacity_history
+        # Salviamo per ogni record della capacity trends solo se il campo "pool" NON contiene '/'
+        try:
+            for idx, row in df_capacity.iterrows():
+                if pd.isna(row['pool']) or ('/' not in row['pool']):
+                    # Costruiamo un document ID utilizzando hostid, pool e date (con formattazione dei separatori)
+                    formatted_date = row['date'].replace(" ", "_").replace(":", "-")
+                    doc_id = f"{row['hostid']}_{row['pool']}_{formatted_date}"
+                    # Salviamo nella collection capacity_history i campi hostid, pool e date
+                    db.collection("capacity_history").document(doc_id).set({
+                        "hostid": row['hostid'],
+                        "pool": row['pool'],
+                        "date": row['date']
+                    })
+            logging.info("Firestore capacity_history update completed")
+        except Exception as e:
+            logging.error("Error updating capacity_history: {}".format(e))
+        # ------------------------------------------------------------------------------
+
         try:
             # Update Firestore documents for system data
             for idx, row in df_systems.iterrows():
@@ -111,9 +131,9 @@ class Main(BaseModel):
                 else:
                     # If the document does not exist, create it with the full data
                     doc_ref.set(full_doc_data)
-            logging.info("Firestore update completed")
+            logging.info("Firestore system_data update completed")
         except Exception as e:
-            logging.error("Error updating Firestore: {}".format(e))
+            logging.error("Error updating Firestore system_data: {}".format(e))
             raise e
         
         try:

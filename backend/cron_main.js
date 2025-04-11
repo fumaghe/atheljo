@@ -46,7 +46,9 @@ cron.schedule('*/3 * * * *', () => {
 
   pyProcess.on('close', (code) => {
     console.log(`[CRON_MAIN] main.py exited with code ${code}`);
-    updateMUP();
+    updateMUP().then(() => {
+      updateAvgTiming();
+    });
   });
 });
 
@@ -82,5 +84,59 @@ async function updateMUP() {
     console.log('[CRON_MAIN] MUP update completed');
   } catch (error) {
     console.error('[CRON_MAIN] Error during MUP update:', error);
+  }
+}
+
+// Nuova funzione per aggiornare avg_speed e avg_time in system_data
+async function updateAvgTiming() {
+  console.log('[CRON_MAIN] Starting avg timing update for systems with matching capacity_history records');
+  try {
+    // Recupera tutti i documenti dalla collection system_data
+    const systemsSnapshot = await firestore.collection('system_data').get();
+    for (const doc of systemsSnapshot.docs) {
+      const system = doc.data();
+      const hostid = system.hostid;
+      const pool = system.pool;
+      
+      // Interroga capacity_history per ottenere i documenti associati a hostid e pool, ordinati per data
+      const historyQuerySnapshot = await firestore
+        .collection('capacity_history')
+        .where('hostid', '==', hostid)
+        .where('pool', '==', pool)
+        .orderBy('date')
+        .get();
+      
+      const dates = [];
+      historyQuerySnapshot.forEach(recordDoc => {
+        const record = recordDoc.data();
+        dates.push(new Date(record.date));
+      });
+      
+      // Se non sono presenti almeno due record, saltiamo questo sistema
+      if (dates.length < 2) {
+        console.log(`[CRON_MAIN] Skipping ${doc.id} as less than two capacity_history records found`);
+        continue;
+      }
+      
+      // Calcola la somma delle differenze (in minuti) tra telemetrie consecutive
+      let totalDiffMinutes = 0;
+      for (let i = 1; i < dates.length; i++) {
+        totalDiffMinutes += (dates[i] - dates[i - 1]) / (1000 * 60);
+      }
+      
+      // Calcola la media delle differenze
+      const avgDiffMinutes = Number((totalDiffMinutes / (dates.length - 1)).toFixed(2));
+      
+      // Aggiorna il documento in system_data con avg_speed e avg_time
+      await firestore.collection('system_data').doc(doc.id).update({
+        avg_speed: avgDiffMinutes,
+        avg_time: avgDiffMinutes
+      });
+      
+      console.log(`[CRON_MAIN] Updated ${doc.id} with avg_speed and avg_time = ${avgDiffMinutes}`);
+    }
+    console.log('[CRON_MAIN] Avg timing update completed');
+  } catch (error) {
+    console.error('[CRON_MAIN] Error updating avg timing:', error);
   }
 }
