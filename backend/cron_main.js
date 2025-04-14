@@ -135,7 +135,6 @@ async function updateAvgTiming() {
       
       // Se non sono presenti almeno due record, saltiamo questo sistema
       if (dates.length < 2) {
-        console.log(`[CRON_MAIN] Skipping ${doc.id} as less than two capacity_history records found`);
         continue;
       }
       
@@ -157,7 +156,6 @@ async function updateAvgTiming() {
         avg_time: avgDiffMinutes
       });
       
-      console.log(`[CRON_MAIN] Updated ${doc.id} with avg_speed and avg_time = ${avgDiffMinutes}`);
     }
     console.log('[CRON_MAIN] Avg timing update completed');
   } catch (error) {
