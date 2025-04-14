@@ -52,7 +52,7 @@ cron.schedule('*/5 * * * *', () => {
   });
 });
 
-cron.schedule('57 09 * * *', () => {
+cron.schedule('35 10 * * *', () => {
   console.log('[CRON_MAIN] Starting firestore_capacity_trends_cleanup.py at 09:57');
   
   // Imposta il percorso al file firestore_capacity_trends_cleanup.py
