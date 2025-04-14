@@ -138,7 +138,6 @@ class Main(BaseModel):
                 for (doc, doc_date) in docs:
                     if doc_date < cutoff_dt:
                         doc.reference.delete()
-                        logging.info(f"Deleted capacity_history document {doc.id} (date: {doc_date}) for group {key} because it is older than cutoff {cutoff_dt}")
             logging.info("Deletion of capacity_history documents older than cutoff completed")
         except Exception as e:
             logging.error("Error during deletion in capacity_history: {}".format(e))
@@ -170,7 +169,6 @@ class Main(BaseModel):
                 # Ottieni il riferimento al documento Firestore e aggiorna (merge=True per aggiornare solo i campi specificati)
                 doc_ref = db.collection("system_data").document(doc_id)
                 doc_ref.set(update_fields, merge=True)
-                logging.info(f"Firestore document {doc_id} updated with fields: {update_fields}")
             logging.info("Firestore system_data update completed")
         except Exception as e:
             logging.error("Error updating Firestore system_data: {}".format(e))
@@ -182,7 +180,6 @@ class Main(BaseModel):
             for doc in docs:
                 if "_" not in doc.id:
                     doc.reference.delete()
-                    logging.info(f"Deleted document {doc.id} because it does not contain '_'")
             logging.info("Deletion of old system_data documents completed")
         except Exception as e:
             logging.error("Error during deletion in system_data: {}".format(e))
