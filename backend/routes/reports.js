@@ -136,12 +136,12 @@ router.post('/create', async (req, res) => {
       const transporter = nodemailer.createTransport({
         service: 'gmail',
         auth: {
-          user: process.env.EMAIL_USER || 'afuma1909@gmail.com',
+          user: process.env.EMAIL_USER || 'no-reply@storvix.eu',
           pass: process.env.EMAIL_PASSWORD
         }
       });
       const mailOptions = {
-        from: process.env.EMAIL_USER || 'afuma1909@gmail.com',
+        from: process.env.EMAIL_USER || 'no-reply@storvix.eu',
         to: userRecord?.email,
         subject: `Schedule Confirmation: ${subject}`,
         text: emailBody,
@@ -169,12 +169,12 @@ router.post('/create', async (req, res) => {
         const transporter = nodemailer.createTransport({
           service: 'gmail',
           auth: {
-            user: process.env.EMAIL_USER || 'afuma1909@gmail.com',
+            user: process.env.EMAIL_USER || 'no-reply@storvix.eu',
             pass: process.env.EMAIL_PASSWORD
           }
         });
         const mailOptions = {
-          from: process.env.EMAIL_USER || 'afuma1909@gmail.com',
+          from: process.env.EMAIL_USER || 'no-reply@storvix.eu',
           to: userRecord.email,
           subject: subject,
           text: emailBody,
@@ -322,12 +322,12 @@ router.delete('/schedule/:id', async (req, res) => {
         const transporter = nodemailer.createTransport({
           service: 'gmail',
           auth: {
-            user: process.env.EMAIL_USER || 'afuma1909@gmail.com',
+            user: process.env.EMAIL_USER || 'no-reply@storvix.eu',
             pass: process.env.EMAIL_PASSWORD
           }
         });
         const mailOptions = {
-          from: process.env.EMAIL_USER || 'afuma1909@gmail.com',
+          from: process.env.EMAIL_USER || 'no-reply@storvix.eu',
           to: userRecord.email,
           subject: 'Scheduled Report Cancelled',
           text: `Your scheduled report for host "${sched.host}" has been cancelled.`
@@ -395,13 +395,13 @@ router.post('/send', async (req, res) => {
     const transporter = nodemailer.createTransport({
       service: 'gmail',
       auth: {
-        user: process.env.EMAIL_USER || 'afuma1909@gmail.com',
+        user: process.env.EMAIL_USER || 'no-reply@storvix.eu',
         pass: process.env.EMAIL_PASSWORD
       }
     });
     const base64Data = attachment.split('base64,')[1];
     const mailOptions = {
-      from: process.env.EMAIL_USER || 'afuma1909@gmail.com',
+      from: process.env.EMAIL_USER || 'no-reply@storvix.eu',
       to: email,
       subject: subject,
       text: body,

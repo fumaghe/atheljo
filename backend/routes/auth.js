@@ -48,7 +48,7 @@ router.post('/login', async (req, res) => {
       console.log(`OTP generated for user ${user.id}: ${otp}`);
       
       // Configura il trasportatore per l'invio dell'email tramite Gmail
-      const emailUser = process.env.EMAIL_USER || 'afuma1909@gmail.com';
+      const emailUser = process.env.EMAIL_USER || 'no-reply@storvix.eu';
       const emailPassword = process.env.EMAIL_PASSWORD;
       if (!emailPassword) {
         console.error("EMAIL_PASSWORD is missing in environment variables.");
@@ -138,12 +138,12 @@ router.post('/forgot-password', async (req, res) => {
     const transporter = nodemailer.createTransport({
       service: 'gmail',
       auth: {
-        user: process.env.EMAIL_USER || 'afuma1909@gmail.com',
+        user: process.env.EMAIL_USER || 'no-reply@storvix.eu',
         pass: process.env.EMAIL_PASSWORD
       }
     });
     const mailOptions = {
-      from: process.env.EMAIL_USER || 'afuma1909@gmail.com',
+      from: process.env.EMAIL_USER || 'no-reply@storvix.eu',
       to: user.email,
       subject: 'Password Reset',
       text: `You requested a password reset. Click the following link to reset your password. This link is valid for 1 hour:\n\n${resetUrl}`

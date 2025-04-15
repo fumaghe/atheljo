@@ -130,7 +130,7 @@ cron.schedule('*/40 * * * *', async () => {
         const transporter = nodemailer.createTransport({
           service: 'gmail',
           auth: {
-            user: process.env.EMAIL_USER || 'afuma1909@gmail.com',
+            user: process.env.EMAIL_USER || 'no-reply@storvix.eu',
             pass: process.env.EMAIL_PASSWORD
           }
         });
@@ -139,7 +139,7 @@ cron.schedule('*/40 * * * *', async () => {
           : 'Scheduled Aggregated Report';
         const emailBody = `Attached is your scheduled report generated at ${now.toLocaleString()}.`;
         const mailOptions = {
-          from: process.env.EMAIL_USER || 'afuma1909@gmail.com',
+          from: process.env.EMAIL_USER || 'no-reply@storvix.eu',
           to: userRecord.email,
           subject: reportSubject,
           text: emailBody,
