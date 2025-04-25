@@ -91,7 +91,7 @@ function GenerateReportSection() {
   const { user } = useAuth();
   const [systemsData, setSystemsData] = useState<SystemData[]>([]);
   const [loading, setLoading] = useState(true);
-  const [selectedHost, setSelectedHost] = useState('all');
+  const [selectedHostPool, setSelectedHostPool] = useState<'all' | string>('all');
   const [isGeneratingReport, setIsGeneratingReport] = useState(false);
   const [sendEmail, setSendEmail] = useState(false);
   const [notification, setNotification] = useState<string>('');
@@ -149,14 +149,17 @@ function GenerateReportSection() {
     return systemsData.filter(s => s.company === user.company);
   }, [systemsData, user]);
 
-  const uniqueHosts = React.useMemo(() => {
-    const setHosts = new Set(filteredSystems.map(s => s.hostid));
-    return Array.from(setHosts);
+  const uniqueHostPools = React.useMemo(() => {
+    const setHP = new Set<string>();
+    filteredSystems
+      .filter(s => s.sending_telemetry)  
+      .forEach(s => setHP.add(`${s.hostid}_${s.pool}`));
+    return Array.from(setHP);
   }, [filteredSystems]);
 
-  // Se il blocco deve apparire blur, mostriamo dei dummy host
-  const dummyHosts = ['dummy-host-1', 'dummy-host-2', 'dummy-host-3'];
-  const displayedHosts = reportShouldBlur ? dummyHosts : uniqueHosts;
+  const dummyOptions: string[] = ['dummy-host-1_sp0', 'dummy-host-2_sp1', 'dummy-host-3_sp2'];
+  const optionsList: string[] = reportShouldBlur ? dummyOptions : uniqueHostPools;
+
 
   // Funzione per scaricare il report dopo la sua creazione
   const handleDownload = async (reportId: string, fileName: string) => {
@@ -190,7 +193,7 @@ function GenerateReportSection() {
         userId: user!.id,
         username: user!.username,
         company: user!.company,
-        host: selectedHost,
+        host: selectedHostPool,
         sections: {
           systemStats: true,
           usageChart: true,
@@ -226,8 +229,8 @@ function GenerateReportSection() {
         // Scarica automaticamente il report se non è richiesto l'invio email
         handleDownload(
           reportId,
-          selectedHost && selectedHost !== 'all'
-            ? `${selectedHost}-report.pdf`
+          selectedHostPool !== 'all'
+            ? `${selectedHostPool}-report.pdf`
             : 'report.pdf'
         );
         setNotification('Report generated and downloaded');
@@ -267,17 +270,17 @@ function GenerateReportSection() {
 
           <div className="relative">
             <div className={`bg-[#06272b] rounded-lg p-4 ${reportShouldBlur ? 'blur-sm pointer-events-none' : ''}`}>
-              <label className="block text-sm mb-2 text-[#eeeeee]/60">Select Host:</label>
-              <select
-                value={selectedHost}
-                onChange={(e) => setSelectedHost(e.target.value)}
-                className="w-full p-2 bg-[#06272b] text-[#eeeeee] rounded border border-[#22c1d4]/20"
-              >
-                <option value="all">All Hosts</option>
-                {displayedHosts.map(h => (
-                  <option key={h} value={h}>{h}</option>
-                ))}
-              </select>
+            <label className="block text-sm mb-2 text-[#eeeeee]/60">Select Host:</label>
+            <select
+              value={selectedHostPool}
+              onChange={(e) => setSelectedHostPool(e.target.value)}
+              className="w-full p-2 bg-[#06272b] text-[#eeeeee] rounded border border-[#22c1d4]/20"
+            >
+              <option value="all">All Hosts</option>
+              {optionsList.map((hp: string) => (
+                <option key={hp} value={hp}>{hp}</option>
+              ))}
+            </select>
 
               <div className="mt-4 flex items-center">
                 <input
