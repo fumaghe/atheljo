@@ -1,17 +1,23 @@
 // backend/emailSchedulerCron.js
+
 import cron from 'node-cron';
 import firestore from './firebase.js';
 import nodemailer from 'nodemailer';
-import { getNextRun } from './utils/getNextRun.js';         // ri-usa la stessa funzione che usi per i report
+import { getNextRun } from './utils/getNextRun.js';
 import { generatePDFReportForAPI } from './utils/pdfGenerator.js';
 import { generateExcelBuffer }    from './utils/reportGenerator.js';
 import { parseCSVFile }           from './utils/csvParser.js';
-import { getEnhancedSystemHealthScore, computeAggregatedStats } from './utils/healthCalculator.js';
+import {
+  getEnhancedSystemHealthScore,
+  computeAggregatedStats
+} from './utils/healthCalculator.js';
+// Import corretto dal tuo backend/utils
+import { generateSystemSummary } from './utils/generateSystemSummary.js';
 
 const SYSTEMS_CSV_PATH = 'data/systems_data.csv';
 
-// ogni 5 minuti
-cron.schedule('*/5 * * * *', async () => {
+// ogni minuto (*/1 * * * *) o ogni 5 minuti (*/5 * * * *)
+cron.schedule('*/1 * * * *', async () => {
   const now = new Date();
   console.log('[CRON-MAIL] checking scheduled mails –', now.toISOString());
 
@@ -23,7 +29,7 @@ cron.schedule('*/5 * * * *', async () => {
 
   if (snap.empty) return;
 
-  // SMTP
+  // configura SMTP
   const transporter = nodemailer.createTransport({
     service: 'gmail',
     auth: {
@@ -38,7 +44,6 @@ cron.schedule('*/5 * * * *', async () => {
     // prepara eventuale allegato
     let attachments = [];
     if (sched.attachReport) {
-      // carica dati e genera file
       const systemsData = await parseCSVFile(SYSTEMS_CSV_PATH);
       let buffer, filename, mimeType;
 
@@ -48,14 +53,14 @@ cron.schedule('*/5 * * * *', async () => {
           company: sched.company,
           logoDataUrl: null,
           systemName: sched.host,
-          aggregatedStats: sched.host === 'all'
-            ? computeAggregatedStats(systemsData)
-            : null,
-          health: sched.host !== 'all'
-            ? getEnhancedSystemHealthScore(
-                systemsData.find(s => s.hostid === sched.host)
-              )
-            : null,
+          aggregatedStats:
+            sched.host === 'all' ? computeAggregatedStats(systemsData) : null,
+          health:
+            sched.host !== 'all'
+              ? getEnhancedSystemHealthScore(
+                  systemsData.find(s => s.hostid === sched.host)
+                )
+              : null,
           forecast: []
         });
         buffer   = Buffer.from(dataUri.split('base64,')[1], 'base64');
@@ -70,12 +75,25 @@ cron.schedule('*/5 * * * *', async () => {
       attachments.push({ filename, content: buffer, contentType: mimeType });
     }
 
+    // genera il corpo della mail: usa generateSystemSummary se runAlgorithm=true
+    let textBody = sched.body || '';
+    if (sched.runAlgorithm) {
+      try {
+        textBody = await generateSystemSummary();
+      } catch (err) {
+        console.error('[CRON-MAIL] errore generazione summary:', err);
+        // fallback: rimani su sched.body
+      }
+    }
+
     // invia mail
     const mailOptions = {
       from: process.env.EMAIL_USER || 'no-reply@storvix.eu',
-      to: sched.recipients,
-      subject: sched.subject || 'Scheduled report',
-      text: sched.body || '',
+      to: Array.isArray(sched.recipients)
+        ? sched.recipients.join(',')
+        : sched.recipients,
+      subject: sched.subject || 'Systems Status Summary',
+      text: textBody,
       attachments
     };
 
@@ -86,19 +104,18 @@ cron.schedule('*/5 * * * *', async () => {
       console.error('[CRON-MAIL] error sending mail', err);
     }
 
-    // calcola prossimo run o cancella se "once"
+    // aggiorna nextRunAt o cancella se \"once\"
     let nextRunAt = null;
     if (sched.frequency && sched.frequency !== 'once') {
       nextRunAt = getNextRun(now, sched.frequency, sched.customInterval);
     }
 
     if (nextRunAt) {
-      await firestore.collection('ScheduleMail').doc(sched.id).update({
-        lastRunAt: now,
-        nextRunAt
-      });
+      await firestore
+        .collection('ScheduleMail')
+        .doc(sched.id)
+        .update({ lastRunAt: now, nextRunAt });
     } else {
-      // una-tantum -> cancella
       await firestore.collection('ScheduleMail').doc(sched.id).delete();
     }
   }

@@ -1,12 +1,14 @@
+// src/pages/Reports/index.tsx
 import React, { useState, useEffect } from 'react';
 import { Navigate } from 'react-router-dom';
-import { FaEnvelope, FaHistory, FaCalendarAlt } from 'react-icons/fa';
+import { FaEnvelope, FaCalendarAlt } from 'react-icons/fa';
 import {
   Plus,
   X as CloseIcon,
   Lock,
   Edit2 as EditIcon,
   Trash2 as TrashIcon,
+  Send as SendIcon,
 } from 'lucide-react';
 
 import { useAuth } from '../../context/AuthContext';
@@ -23,8 +25,9 @@ import {
   Timestamp,
   updateDoc,
 } from 'firebase/firestore';
+import { generateSystemSummary } from '../../utils/generateSystemSummary';
 
-/* --------------------------- TIPI & COSTANTI -------------------------- */
+/* --------------------------- TYPES & CONSTANTS -------------------------- */
 type Frequency = 'once' | 'hourly' | 'daily' | 'weekly' | 'monthly' | 'custom';
 
 interface MailSchedule {
@@ -36,6 +39,7 @@ interface MailSchedule {
   recipients: string[];
   subject?: string;
   body?: string;
+  runAlgorithm?: boolean;
 
   frequency: Frequency;
   customInterval?: number | null;
@@ -45,11 +49,11 @@ interface MailSchedule {
 }
 
 const freqLabels: Record<Exclude<Frequency, 'custom'>, string> = {
-  once: 'Una volta',
-  hourly: 'Ogni ora',
-  daily: 'Ogni giorno',
-  weekly: 'Ogni settimana',
-  monthly: 'Ogni mese',
+  once: 'Once',
+  hourly: 'Every hour',
+  daily: 'Every day',
+  weekly: 'Every week',
+  monthly: 'Every month',
 };
 
 /* ----------------------------- MAIN PAGE ------------------------------ */
@@ -57,13 +61,11 @@ export default function EmailReports() {
   const { user, isAuthenticated, isInitializingSession } = useAuth();
 
   if (isInitializingSession) {
-    return (
-      <div className="text-[#eee] p-8">
-        Loading session…
-      </div>
-    );
+    return <div className="text-[#eee] p-8">Loading session…</div>;
   }
-  if (!isAuthenticated || !user) return <Navigate to="/login" replace />;
+  if (!isAuthenticated || !user) {
+    return <Navigate to="/login" replace />;
+  }
 
   return (
     <div className="min-h-screen bg-[#06272b] py-6">
@@ -86,7 +88,7 @@ export default function EmailReports() {
 }
 
 /* ---------------------------------------------------------------------- */
-/*               SEZIONE 1 · FORM DI SCHEDULAZIONE EMAIL                  */
+/*               SECTION 1 · EMAIL SCHEDULING FORM                       */
 /* ---------------------------------------------------------------------- */
 function ScheduleEmailSection({ user }: { user: any }) {
   const { shouldBlur } = useSubscriptionPermissions('Emails', 'Schedule Email');
@@ -98,7 +100,9 @@ function ScheduleEmailSection({ user }: { user: any }) {
   const [firstRun, setFirstRun] = useState('');
   const [frequency, setFrequency] = useState<Frequency>('once');
   const [customInterval, setCustomInterval] = useState<number>(0);
+  const [runAlgorithm, setRunAlgorithm] = useState<boolean>(false);
   const [notification, setNotification] = useState('');
+  const [generating, setGenerating] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
 
   const resetForm = () => {
@@ -109,6 +113,7 @@ function ScheduleEmailSection({ user }: { user: any }) {
     setFirstRun('');
     setFrequency('once');
     setCustomInterval(0);
+    setRunAlgorithm(false);
     setEditingId(null);
   };
 
@@ -119,18 +124,32 @@ function ScheduleEmailSection({ user }: { user: any }) {
     }
   };
 
+  const handleGenerate = async () => {
+    setGenerating(true);
+    try {
+      const summary = await generateSystemSummary();
+      setBody(summary);
+    } catch (err) {
+      console.error(err);
+      setNotification('Errore nella generazione del riepilogo.');
+    } finally {
+      setGenerating(false);
+    }
+  };
+
   const handleSave = async () => {
     if (recipients.length === 0 || !firstRun) {
-      setNotification('Inserisci almeno un destinatario e la data/ora di invio.');
+      setNotification('Please enter at least one recipient and a date/time.');
       return;
     }
     try {
-      const payload = {
+      const payload: Omit<MailSchedule, 'id'> = {
         createdBy: user.id,
         company: user.company,
         recipients,
         subject,
         body,
+        runAlgorithm,
         frequency,
         customInterval: frequency === 'custom' ? customInterval : null,
         firstRunAt: Timestamp.fromDate(new Date(firstRun)),
@@ -140,16 +159,16 @@ function ScheduleEmailSection({ user }: { user: any }) {
 
       if (editingId) {
         await updateDoc(doc(firestore, 'ScheduleMail', editingId), payload);
-        setNotification('Programmazione aggiornata con successo.');
+        setNotification('Schedule updated successfully.');
       } else {
         await addDoc(collection(firestore, 'ScheduleMail'), payload);
-        setNotification('Programmazione salvata con successo.');
+        setNotification('Schedule saved successfully.');
       }
 
       resetForm();
     } catch (err) {
       console.error(err);
-      setNotification('Errore nel salvataggio.');
+      setNotification('Error saving schedule.');
     }
   };
 
@@ -158,6 +177,7 @@ function ScheduleEmailSection({ user }: { user: any }) {
     setRecipients(m.recipients);
     setSubject(m.subject ?? '');
     setBody(m.body ?? '');
+    setRunAlgorithm(m.runAlgorithm ?? false);
     setFirstRun(new Date(m.firstRunAt.seconds * 1000).toISOString().slice(0, 16));
     setFrequency(m.frequency);
     if (m.frequency === 'custom' && m.customInterval) {
@@ -171,20 +191,21 @@ function ScheduleEmailSection({ user }: { user: any }) {
   }, []);
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 relative">
       <h2 className="text-2xl font-bold text-[#f8485e] mb-4">Schedule Email</h2>
 
       <div className={shouldBlur ? 'blur-sm pointer-events-none space-y-4' : 'space-y-4'}>
+        {/* Recipients & Subject */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
-            <label className="block text-sm mb-1 text-[#eee]">Destinatari</label>
+            <label className="block text-sm mb-1 text-[#eee]">Recipients</label>
             <div className="flex gap-2">
               <input
                 type="email"
                 value={newRecipient}
                 onChange={(e) => setNewRecipient(e.target.value)}
                 className="flex-1 p-2 bg-[#06272b] text-[#eee] rounded border border-[#22c1d4]/20"
-                placeholder="email@dominio"
+                placeholder="email@domain.com"
               />
               <button
                 onClick={handleAddRecipient}
@@ -212,31 +233,51 @@ function ScheduleEmailSection({ user }: { user: any }) {
             )}
           </div>
           <div>
-            <label className="block text-sm mb-1 text-[#eee]">Oggetto</label>
+            <label className="block text-sm mb-1 text-[#eee]">Subject</label>
             <input
               type="text"
               value={subject}
               onChange={(e) => setSubject(e.target.value)}
               className="w-full p-2 bg-[#06272b] text-[#eee] rounded border border-[#22c1d4]/20"
-              placeholder="Oggetto email"
+              placeholder="Email subject"
             />
           </div>
         </div>
 
+        {/* Body with Generate & Toggle */}
         <div>
-          <label className="block text-sm mb-1 text-[#eee]">Messaggio</label>
+          <label className="block text-sm mb-1 text-[#eee]">Message</label>
+          <div className="flex items-center gap-2 mb-2">
+            <button
+              onClick={handleGenerate}
+              disabled={generating}
+              className="px-4 py-2 bg-[#f0ad4e] text-[#061e22] font-bold rounded hover:bg-[#ffc107] transition"
+            >
+              {generating ? 'Genero…' : 'Genera Riepilogo'}
+            </button>
+            <label className="flex items-center text-sm text-[#eee] gap-2">
+              <input
+                type="checkbox"
+                checked={runAlgorithm}
+                onChange={() => setRunAlgorithm(!runAlgorithm)}
+                className="form-checkbox h-5 w-5 text-[#22c1d4] bg-[#06272b] rounded"
+              />
+              <span>Run Algorithm on Schedule</span>
+            </label>
+          </div>
           <textarea
-            rows={4}
+            rows={12}
             value={body}
             onChange={(e) => setBody(e.target.value)}
             className="w-full p-2 bg-[#06272b] text-[#eee] rounded border border-[#22c1d4]/20"
-            placeholder="Corpo della mail"
+            placeholder="Email body"
           />
         </div>
 
+        {/* Date & Frequency */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
-            <label className="block text-sm mb-1 text-[#eee]">Data e Ora</label>
+            <label className="block text-sm mb-1 text-[#eee]">Date & Time</label>
             <input
               type="datetime-local"
               value={firstRun}
@@ -245,17 +286,17 @@ function ScheduleEmailSection({ user }: { user: any }) {
             />
           </div>
           <div>
-            <label className="block text-sm mb-1 text-[#eee]">Frequenza</label>
+            <label className="block text-sm mb-1 text-[#eee]">Frequency</label>
             <select
               value={frequency}
               onChange={(e) => setFrequency(e.target.value as Frequency)}
               className="w-full p-2 bg-[#06272b] text-[#eee] rounded border border-[#22c1d4]/20"
             >
-              <option value="once">Una sola volta</option>
-              <option value="hourly">Ogni ora</option>
-              <option value="daily">Ogni giorno</option>
-              <option value="weekly">Ogni settimana</option>
-              <option value="monthly">Ogni mese</option>
+              <option value="once">Once</option>
+              <option value="hourly">Every hour</option>
+              <option value="daily">Every day</option>
+              <option value="weekly">Every week</option>
+              <option value="monthly">Every month</option>
               <option value="custom">Custom</option>
             </select>
           </div>
@@ -263,39 +304,53 @@ function ScheduleEmailSection({ user }: { user: any }) {
 
         {frequency === 'custom' && (
           <div>
-            <label className="block text-sm mb-1 text-[#eee]">
-              Intervallo
-            </label>
+            <label className="block text-sm mb-1 text-[#eee]">Interval</label>
             <input
               type="number"
               value={customInterval}
               onChange={(e) => setCustomInterval(Number(e.target.value))}
               className="w-full p-2 bg-[#06272b] text-[#eee] rounded border border-[#22c1d4]/20"
-              placeholder="es. 12 = ore, 48 = giorni"
+              placeholder="e.g. 12 = hours, 48 = days"
             />
           </div>
         )}
 
-        <div className="flex justify-start">
+        {/* Save Buttons */}
+        <div className="flex space-x-4">
           <button
             onClick={handleSave}
-            className="mt-2 px-6 py-3 bg-[#22c1d4] text-[#061e22] font-bold rounded hover:bg-[#2df5fa] transition transform hover:scale-105"
+            className="flex items-center mt-2 px-6 py-3 bg-[#22c1d4] text-[#061e22] font-bold rounded hover:bg-[#2df5fa] transition transform hover:scale-105"
           >
-            {editingId ? '✏️ Aggiorna Email' : '📤 Programma Email'}
+            {editingId ? (
+              <>
+                <EditIcon size={16} className="mr-2" />
+                Update Email
+              </>
+            ) : (
+              <>
+                <SendIcon size={16} className="mr-2" />
+                Schedule Email
+              </>
+            )}
           </button>
+          {editingId && (
+            <button
+              onClick={resetForm}
+              className="flex items-center mt-2 px-6 py-3 bg-[#f8485e] text-white font-bold rounded hover:bg-red-500 transition transform hover:scale-105"
+            >
+              <CloseIcon size={16} className="mr-2" />
+              Exit Edit Mode
+            </button>
+          )}
         </div>
 
-        {notification && (
-          <p className="text-sm text-[#22c1d4]">{notification}</p>
-        )}
+        {notification && <p className="text-sm text-[#22c1d4]">{notification}</p>}
       </div>
 
       {shouldBlur && (
         <div className="absolute inset-0 z-10 flex flex-col items-center justify-center text-center px-4">
           <Lock className="w-8 h-8 text-white mb-2" />
-          <span className="text-white">
-            Upgrade your subscription to schedule emails.
-          </span>
+          <span className="text-white">Upgrade your subscription to schedule emails.</span>
         </div>
       )}
     </div>
@@ -303,7 +358,7 @@ function ScheduleEmailSection({ user }: { user: any }) {
 }
 
 /* ---------------------------------------------------------------------- */
-/*            SEZIONE 2 · LISTA DELLE EMAIL PROGRAMMATE                   */
+/*            SECTION 2 · LIST OF SCHEDULED EMAILS                        */
 /* ---------------------------------------------------------------------- */
 function ScheduledEmailsSection({ user }: { user: any }) {
   const { shouldBlur } = useSubscriptionPermissions('Emails', 'History Section');
@@ -329,9 +384,7 @@ function ScheduledEmailsSection({ user }: { user: any }) {
 
         const list = all
           .filter((m) => m.company === user.company)
-          .sort(
-            (a, b) => a.nextRunAt.seconds - b.nextRunAt.seconds
-          );
+          .sort((a, b) => a.nextRunAt.seconds - b.nextRunAt.seconds);
 
         setMailSchedules(list);
       } catch (err) {
@@ -348,10 +401,10 @@ function ScheduledEmailsSection({ user }: { user: any }) {
     try {
       await deleteDoc(doc(firestore, 'ScheduleMail', id));
       setMailSchedules((prev) => prev.filter((m) => m.id !== id));
-      setNotification('Programmazione cancellata.');
+      setNotification('Schedule cancelled.');
     } catch (err) {
       console.error(err);
-      setNotification('Errore nella cancellazione.');
+      setNotification('Error cancelling schedule.');
     }
   };
 
@@ -363,21 +416,19 @@ function ScheduledEmailsSection({ user }: { user: any }) {
         {loading && <p className="text-[#22c1d4]">Loading…</p>}
 
         {!loading && mailSchedules.length === 0 && (
-          <p className="text-[#eee]">Nessuna email programmata</p>
+          <p className="text-[#eee]">No scheduled emails</p>
         )}
 
         {mailSchedules.map((m) => {
           const nextDate = new Date(m.nextRunAt.seconds * 1000);
-          const nextStr = nextDate.toLocaleString('it-IT', {
+          const nextStr = nextDate.toLocaleString('en-US', {
             dateStyle: 'short',
             timeStyle: 'short',
           });
 
           const freqLabel =
             m.frequency === 'custom'
-              ? `Ogni ${m.customInterval!}${
-                  m.customInterval! <= 24 ? 'h' : 'd'
-                }`
+              ? `Every ${m.customInterval!}${m.customInterval! <= 24 ? 'h' : 'd'}`
               : freqLabels[m.frequency];
 
           const isActive = nextDate > new Date();
@@ -394,7 +445,7 @@ function ScheduledEmailsSection({ user }: { user: any }) {
                 <span
                   className={`px-2 py-0.5 text-xs font-medium rounded-full ${statusColor}`}
                 >
-                  {isActive ? 'Attiva' : 'Conclusa'}
+                  {isActive ? 'Active' : 'Completed'}
                 </span>
 
                 <div>
@@ -411,7 +462,7 @@ function ScheduledEmailsSection({ user }: { user: any }) {
                   onClick={() => (window as any).loadEmailForEdit(m)}
                   disabled={shouldBlur}
                   className="px-4 py-2 bg-[#22c1d4] text-[#061e22] font-bold rounded hover:bg-[#2df5fa] transition transform hover:scale-105 disabled:opacity-50"
-                  title="Modifica"
+                  title="Edit"
                 >
                   <EditIcon size={16} />
                 </button>
@@ -420,7 +471,7 @@ function ScheduledEmailsSection({ user }: { user: any }) {
                   onClick={() => handleCancel(m.id)}
                   disabled={shouldBlur}
                   className="px-4 py-2 bg-[#22c1d4] text-[#061e22] font-bold rounded hover:bg-[#2df5fa] transition transform hover:scale-105 disabled:opacity-50"
-                  title="Elimina"
+                  title="Delete"
                 >
                   <TrashIcon size={16} />
                 </button>
