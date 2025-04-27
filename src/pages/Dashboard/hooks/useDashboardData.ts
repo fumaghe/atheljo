@@ -417,41 +417,48 @@ export function useDashboardData(user: any) {
 
   // =============== 6) aggregatedStats ===============
   const aggregatedStats = useMemo<AggregatedStats | null>(() => {
-    if (systemsData.length === 0) return null
-
-    const days = parseInt(filters.timeRange)
-    const cutoffDate = subDays(new Date(), days)
-
-    // filter aggregated systems again by role and filter
+    if (systemsData.length === 0) return null;
+  
+    const days = parseInt(filters.timeRange);
+    const cutoffDate = subDays(new Date(), days);
+  
     const filteredSystems = systemsData.filter((s) => {
+      // 1) visibilità per admin_employee
       if (user?.role === 'admin_employee') {
-        const visible = user.visibleCompanies || []
-        if (visible.length > 0 && !visible.includes(s.company)) return false
-      } else if (user?.role === 'employee' && s.company !== user.company) {
-        return false
-      } else if (user?.role === 'admin' && filters.company !== 'all' && s.company !== filters.company) {
-        return false
-      }
-
-      if (filters.type !== 'all' && s.type !== filters.type) return false
-      if (filters.pool !== 'all' && s.pool !== filters.pool) return false
-      if (filters.telemetry !== 'all') {
-        const shouldBeActive = filters.telemetry === 'active'
-        if (s.sending_telemetry !== shouldBeActive) return false
-      }
-
-      // check if there's “recent” capacity data for (hostid + pool)
-      // we find capacity docs with the same hostid + pool + date >= cutoff
-      if (!s.hostid) return false
-      const hasRecentCap = capacityData.some((c) => {
-        if (c.hostid === s.hostid && c.pool === s.pool) {
-          return new Date(c.date) >= cutoffDate
+        const visible = user.visibleCompanies || [];
+        if (visible.length > 0 && !visible.includes(s.company)) {
+          return false;
         }
-        return false
-      })
-      return hasRecentCap
-    })
-    if (filteredSystems.length === 0) return null
+      }
+  
+      // 2) filtro EXPLICITO company per admin e admin_employee
+      if (
+        (user?.role === 'admin' || user?.role === 'admin_employee') &&
+        filters.company !== 'all' &&
+        s.company !== filters.company
+      ) {
+        return false;
+      }
+  
+      // 3) altri filtri
+      if (filters.type !== 'all' && s.type !== filters.type) return false;
+      if (filters.pool !== 'all' && s.pool !== filters.pool) return false;
+      if (filters.telemetry !== 'all') {
+        const shouldBeActive = filters.telemetry === 'active';
+        if (s.sending_telemetry !== shouldBeActive) return false;
+      }
+  
+      // 4) dati di capacity recenti
+      if (!s.hostid) return false;
+      const hasRecentCap = capacityData.some((c) =>
+        c.hostid === s.hostid &&
+        c.pool === s.pool &&
+        new Date(c.date) >= cutoffDate
+      );
+      return hasRecentCap;
+    });
+  
+    if (filteredSystems.length === 0) return null;
 
     const totalSystems = filteredSystems.length
     let totalUsed = 0
@@ -522,38 +529,47 @@ export function useDashboardData(user: any) {
 
   // =============== 7) filteredSystems (for table listing) ===============
   const filteredSystems = useMemo<SystemData[]>(() => {
-    if (systemsData.length === 0) return []
-    const days = parseInt(filters.timeRange)
-    const cutoffDate = subDays(new Date(), days)
-
+    if (systemsData.length === 0) return [];
+    const days = parseInt(filters.timeRange);
+    const cutoffDate = subDays(new Date(), days);
+  
     return systemsData.filter((system) => {
+      // 1) visibilità per admin_employee
       if (user?.role === 'admin_employee') {
-        const visible = user.visibleCompanies || []
-        if (visible.length > 0 && !visible.includes(system.company)) return false
-      } else if (user?.role === 'employee' && system.company !== user.company) {
-        return false
-      } else if (user?.role === 'admin' && filters.company !== 'all' && system.company !== filters.company) {
-        return false
-      }
-
-      if (filters.type !== 'all' && system.type !== filters.type) return false
-      if (filters.pool !== 'all' && system.pool !== filters.pool) return false
-      if (filters.telemetry !== 'all') {
-        const shouldBeActive = filters.telemetry === 'active'
-        if (system.sending_telemetry !== shouldBeActive) return false
-      }
-
-      // Must have capacity doc for (hostid + pool) with date >= cutoff
-      if (!system.hostid) return false
-      const hasRecent = capacityData.some((c) => {
-        if (c.hostid === system.hostid && c.pool === system.pool) {
-          return new Date(c.date) >= cutoffDate
+        const visible = user.visibleCompanies || [];
+        if (visible.length > 0 && !visible.includes(system.company)) {
+          return false;
         }
-        return false
-      })
-      return hasRecent
-    })
-  }, [systemsData, capacityData, filters, user])
+      }
+  
+      // 2) filtro EXPEDITOR company per admin e admin_employee
+      if (
+        (user?.role === 'admin' || user?.role === 'admin_employee') &&
+        filters.company !== 'all' &&
+        system.company !== filters.company
+      ) {
+        return false;
+      }
+  
+      // 3) altri filtri
+      if (filters.type !== 'all' && system.type !== filters.type) return false;
+      if (filters.pool !== 'all' && system.pool !== filters.pool) return false;
+      if (filters.telemetry !== 'all') {
+        const shouldBeActive = filters.telemetry === 'active';
+        if (system.sending_telemetry !== shouldBeActive) return false;
+      }
+  
+      // 4) dati di capacity recenti
+      if (!system.hostid) return false;
+      const hasRecent = capacityData.some((c) =>
+        c.hostid === system.hostid &&
+        c.pool === system.pool &&
+        new Date(c.date) >= cutoffDate
+      );
+      return hasRecent;
+    });
+  }, [systemsData, capacityData, filters, user]);
+  
 
   // =============== 8) Group capacity data by date for charting ===============
   const groupedCapacityData = useMemo(() => {

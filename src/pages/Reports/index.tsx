@@ -1,619 +1,330 @@
 // src/pages/Reports/index.tsx
 import React, { useState, useEffect } from 'react';
-import { useAuth } from '../../context/AuthContext';
 import { Navigate } from 'react-router-dom';
-import NoPermission from '../../pages/NoPermission';
-import { FaFileAlt, FaHistory, FaCalendarAlt } from 'react-icons/fa';
+import { FaEnvelope, FaHistory, FaCalendarAlt } from 'react-icons/fa';
+import { Plus, X, Lock } from 'lucide-react';
+
+import { useAuth } from '../../context/AuthContext';
 import { useSubscriptionPermissions } from '../../hooks/useSubscriptionPermissions';
-import { Lock } from 'lucide-react';
-import { collection, getDocs, QueryDocumentSnapshot } from 'firebase/firestore';
+import NoPermission from '../../pages/NoPermission';
+
 import firestore from '../../firebaseClient';
+import {
+  collection,
+  addDoc,
+  deleteDoc,
+  doc,
+  getDocs,
+  Timestamp,
+  query,
+  where,
+  orderBy,
+} from 'firebase/firestore';
 
-interface SystemData {
-  name: string;
-  hostid: string;
-  pool: string;
-  type: string;
-  used: number;
-  avail: number;
-  used_snap: number;
-  perc_used: number;
-  perc_snap: number;
-  sending_telemetry: boolean;
-  first_date: string;
-  last_date: string;
-  MUP: number;
-  avg_speed: number;
-  avg_time: number;
-  company: string;
-}
+/* -------------------------------------------------------------------------- */
+/*                        SEZIONE 1 – SCHEDULA UNA MAIL                       */
+/* -------------------------------------------------------------------------- */
 
-// Funzione per aggregare le statistiche dai sistemi
-const computeAggregatedStats = (systems: SystemData[]) => {
-  if (systems.length === 0) return null;
-  let totalAvail = 0,
-    totalUsed = 0,
-    totalSnap = 0,
-    sumPercUsed = 0,
-    sumPercSnap = 0,
-    sumSpeed = 0,
-    sumTime = 0,
-    telemetryActive = 0;
-  systems.forEach(s => {
-    totalAvail += s.avail;
-    totalUsed += s.used;
-    totalSnap += s.used_snap;
-    sumPercUsed += s.perc_used;
-    sumPercSnap += s.perc_snap;
-    sumSpeed += s.avg_speed;
-    sumTime += s.avg_time;
-    if (s.sending_telemetry) telemetryActive++;
-  });
-  const totalSystems = systems.length;
-  return {
-    totalSystems,
-    totalAvail,
-    totalUsed,
-    totalSnap,
-    avgPercUsed: sumPercUsed / totalSystems,
-    avgPercSnap: sumPercSnap / totalSystems,
-    avgSpeed: sumSpeed / totalSystems,
-    avgTime: sumTime / totalSystems,
-    telemetryActive
-  };
-};
-
-const getEnhancedSystemHealthScore = (system: SystemData) => {
-  const { perc_used, avg_time, used_snap, perc_snap, MUP, sending_telemetry } = system;
-  const weightCapacity = 0.40;
-  const weightPerformance = 0.20;
-  const weightTelemetry = 0.15;
-  const weightSnapshots = 0.10;
-  const weightMUP = 0.15;
-
-  const capacityScore = perc_used <= 55 ? 100 : Math.max(0, 100 - ((perc_used - 55) * (100 / 45)));
-  const performanceScore = Math.max(0, 100 - 10 * Math.abs(avg_time - 5));
-  const telemetryScore = sending_telemetry ? 100 : 0;
-  const snapshotsScore = used_snap > 0 ? Math.max(0, Math.min(100, 100 - perc_snap)) : 0;
-  const mupScore = MUP <= 55 ? 100 : Math.max(0, 100 - ((MUP - 55) * (100 / 45)));
-  const finalScore = Math.round(
-    weightCapacity * capacityScore +
-    weightPerformance * performanceScore +
-    weightTelemetry * telemetryScore +
-    weightSnapshots * snapshotsScore +
-    weightMUP * mupScore
-  );
-
-  return { finalScore, metrics: [] };
-};
-
-function GenerateReportSection() {
+function ScheduleEmailSection() {
   const { user } = useAuth();
-  const [systemsData, setSystemsData] = useState<SystemData[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [selectedHostPool, setSelectedHostPool] = useState<'all' | string>('all');
-  const [isGeneratingReport, setIsGeneratingReport] = useState(false);
-  const [sendEmail, setSendEmail] = useState(false);
-  const [notification, setNotification] = useState<string>('');
-  const [scheduleFrequency, setScheduleFrequency] = useState('none');
+  const { canAccess, shouldBlur } = useSubscriptionPermissions('Emails', 'Schedule Email');
+
+  /* ----------------------------- state form ------------------------------ */
+  const [recipients, setRecipients] = useState<string[]>([]);
+  const [newRecipient, setNewRecipient] = useState('');
+  const [subject, setSubject] = useState('');
+  const [body, setBody] = useState('');
+  const [firstRun, setFirstRun] = useState<string>(''); // datetime-local
+  const [frequency, setFrequency] = useState<
+    'once' | 'hourly' | 'daily' | 'weekly' | 'monthly' | 'custom'
+  >('once');
   const [customInterval, setCustomInterval] = useState<number>(0);
+  const [notification, setNotification] = useState('');
 
-  // Base URL dell'API backend
-  const API_BASE = import.meta.env.VITE_API_BASE || '/api';
-
-  // Permessi per generazione report
-  const { canAccess: reportCanAccess, shouldBlur: reportShouldBlur } =
-    useSubscriptionPermissions('Reports', 'Generate Report');
-
-  // Carica i dati dalla collection "system_data" su Firestore
-  useEffect(() => {
-    const loadData = async () => {
-      setLoading(true);
-      try {
-        const systemsSnapshot = await getDocs(collection(firestore, 'system_data'));
-        const systemsRaw = systemsSnapshot.docs.map((doc: QueryDocumentSnapshot) => doc.data());
-        const systems: SystemData[] = systemsRaw.map((s: any) => ({
-          ...s,
-          used: Number(s.used),
-          avail: Number(s.avail),
-          used_snap: Number(s.used_snap),
-          perc_used: Number(s.perc_used),
-          perc_snap: Number(s.perc_snap),
-          MUP: Number(s.MUP),
-          avg_speed: Number(s.avg_speed),
-          avg_time: Number(s.avg_time),
-          sending_telemetry: String(s.sending_telemetry).toLowerCase() === 'true'
-        }));
-        setSystemsData(systems);
-      } catch (error) {
-        console.error('Error loading data from Firestore:', error);
-      } finally {
-        setLoading(false);
-      }
-    };
-    loadData();
-  }, []);
-
-  // Filtra i sistemi in base all'utente
-  const filteredSystems = React.useMemo(() => {
-    if (!user) return systemsData;
-    if (user.role === 'admin') return systemsData;
-    if (user.role === 'admin_employee') {
-      if (user.visibleCompanies && !user.visibleCompanies.includes('all')) {
-        return systemsData.filter(s => user.visibleCompanies?.includes(s.company));
-      } else {
-        return systemsData;
-      }
-    }
-    // Per customer ed employee il filtro avviene per company
-    return systemsData.filter(s => s.company === user.company);
-  }, [systemsData, user]);
-
-  const uniqueHostPools = React.useMemo(() => {
-    const setHP = new Set<string>();
-    filteredSystems
-      .filter(s => s.sending_telemetry)  
-      .forEach(s => setHP.add(`${s.hostid}_${s.pool}`));
-    return Array.from(setHP);
-  }, [filteredSystems]);
-
-  const dummyOptions: string[] = ['dummy-host-1_sp0', 'dummy-host-2_sp1', 'dummy-host-3_sp2'];
-  const optionsList: string[] = reportShouldBlur ? dummyOptions : uniqueHostPools;
-
-
-  // Funzione per scaricare il report dopo la sua creazione
-  const handleDownload = async (reportId: string, fileName: string) => {
-    try {
-      const resp = await fetch(`${API_BASE}/reports/download/${reportId}`);
-      if (!resp.ok) {
-        alert('Error downloading');
-        return;
-      }
-      const blob = await resp.blob();
-      const url = window.URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = fileName;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(url);
-    } catch (err) {
-      console.error('Download error', err);
-      alert('Download error');
+  const handleAddRecipient = () => {
+    if (newRecipient.trim()) {
+      setRecipients([...recipients, newRecipient.trim()]);
+      setNewRecipient('');
     }
   };
 
-  const handleGenerateReport = async () => {
-    setIsGeneratingReport(true);
-    setNotification('');
+  const handleSave = async () => {
+    if (!user) return;
+    if (recipients.length === 0 || !firstRun) {
+      setNotification('Inserisci almeno un destinatario e la data/ora di invio.');
+      return;
+    }
     try {
-      // Costruiamo il payload da inviare al backend per la creazione del report
-      const payload: any = {
-        userId: user!.id,
-        username: user!.username,
-        company: user!.company,
-        host: selectedHostPool,
-        sections: {
-          systemStats: true,
-          usageChart: true,
-          capacityChart: true,
-          detailedTable: true
-        },
-        format: 'pdf'
-      };
-
-      if (scheduleFrequency !== 'none') {
-        payload.schedule = {
-          frequency: scheduleFrequency,
-          customInterval: scheduleFrequency === 'custom' ? customInterval : null
-        };
-      }
-
-      if (sendEmail) {
-        payload.sendEmail = true;
-      }
-
-      const response = await fetch(`${API_BASE}/reports/create`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
+      await addDoc(collection(firestore, 'ScheduleMail'), {
+        createdBy: user.id,
+        company: user.company,
+        recipients,
+        subject,
+        body,
+        frequency,
+        customInterval: frequency === 'custom' ? customInterval : null,
+        firstRunAt: Timestamp.fromDate(new Date(firstRun)),
+        nextRunAt: Timestamp.fromDate(new Date(firstRun)),
+        createdAt: Timestamp.now(),
       });
-      if (!response.ok) {
-        throw new Error('Error creating report');
-      }
-      const data = await response.json();
-      const reportId = data.reportId;
-
-      if (!sendEmail) {
-        // Scarica automaticamente il report se non è richiesto l'invio email
-        handleDownload(
-          reportId,
-          selectedHostPool !== 'all'
-            ? `${selectedHostPool}-report.pdf`
-            : 'report.pdf'
-        );
-        setNotification('Report generated and downloaded');
-      } else {
-        setNotification(
-          scheduleFrequency !== 'none'
-            ? 'Report scheduled and sent via email'
-            : 'Report sent via email'
-        );
-      }
-    } catch (error) {
-      console.error('Error generating report:', error);
-      setNotification('Error generating report');
-    } finally {
-      setIsGeneratingReport(false);
+      // reset form
+      setRecipients([]);
+      setSubject('');
+      setBody('');
+      setFirstRun('');
+      setFrequency('once');
+      setCustomInterval(0);
+      setNotification('Programmazione salvata con successo.');
+    } catch (err) {
+      console.error(err);
+      setNotification('Errore nel salvataggio.');
     }
   };
-
-  if (loading) {
-    return (
-      <div className="p-6 text-center text-xl text-[#22c1d4]">
-        Loading data...
-      </div>
-    );
-  }
 
   return (
     <>
-      {(!reportCanAccess && !reportShouldBlur) ? (
+      {!canAccess && !shouldBlur ? (
         <NoPermission />
       ) : (
-        <div className="max-w-6xl mx-auto p-6 bg-[#0b3c43] rounded-lg shadow-lg space-y-8">
+        <div className="max-w-3xl mx-auto p-6 bg-[#0b3c43] rounded-lg shadow space-y-8">
           <h1 className="text-2xl font-bold flex items-center gap-2">
-            <FaFileAlt className="text-[#22c1d4]" />
-            <span className="text-[#f8485e]">Generate Report</span>
+            <FaEnvelope className="text-[#22c1d4]" />
+            <span className="text-[#f8485e]">Schedule an Email</span>
           </h1>
 
-          <div className="relative">
-            <div className={`bg-[#06272b] rounded-lg p-4 ${reportShouldBlur ? 'blur-sm pointer-events-none' : ''}`}>
-            <label className="block text-sm mb-2 text-[#eeeeee]/60">Select Host:</label>
-            <select
-              value={selectedHostPool}
-              onChange={(e) => setSelectedHostPool(e.target.value)}
-              className="w-full p-2 bg-[#06272b] text-[#eeeeee] rounded border border-[#22c1d4]/20"
-            >
-              <option value="all">All Hosts</option>
-              {optionsList.map((hp: string) => (
-                <option key={hp} value={hp}>{hp}</option>
-              ))}
-            </select>
-
-              <div className="mt-4 flex items-center">
+          <div className={`relative ${shouldBlur ? 'blur-sm pointer-events-none' : ''}`}>
+            {/* ------------------------ destinatari ------------------------ */}
+            <div>
+              <label className="block text-sm mb-1 text-[#eeeeee]">Destinatari</label>
+              <div className="flex gap-2">
                 <input
-                  type="checkbox"
-                  id="sendEmail"
-                  checked={sendEmail}
-                  onChange={(e) => setSendEmail(e.target.checked)}
-                  className="mr-2"
+                  type="email"
+                  value={newRecipient}
+                  onChange={(e) => setNewRecipient(e.target.value)}
+                  className="flex-1 p-2 bg-[#06272b] text-[#eee] rounded border border-[#22c1d4]/20"
+                  placeholder="email@dominio"
                 />
-                <label htmlFor="sendEmail" className="text-sm text-[#eeeeee]">
-                  Send report via email
-                </label>
-              </div>
-
-              <div className="mt-4">
-                <label className="block text-sm mb-2 text-[#eeeeee]/60">Schedule Report:</label>
-                <select
-                  value={scheduleFrequency}
-                  onChange={(e) => setScheduleFrequency(e.target.value)}
-                  className="w-full p-2 bg-[#06272b] text-[#eeeeee] rounded border border-[#22c1d4]/20"
-                >
-                  <option value="none">No scheduling</option>
-                  <option value="hourly">Hourly</option>
-                  <option value="daily">Daily</option>
-                  <option value="weekly">Weekly</option>
-                  <option value="custom">Custom</option>
-                </select>
-                {scheduleFrequency === 'custom' && (
-                  <div className="mt-2">
-                    <label className="block text-sm mb-1 text-[#eeeeee]">Interval (number):</label>
-                    <input
-                      type="number"
-                      value={customInterval}
-                      onChange={(e) => setCustomInterval(Number(e.target.value))}
-                      className="w-full p-2 bg-[#06272b] text-[#eeeeee] rounded border border-[#22c1d4]/20"
-                      placeholder="e.g., 12 for hours or 3 for days"
-                    />
-                    <small className="text-xs text-[#eeeeee]/60">
-                      If ≤ 24, interpreted as hours; otherwise, as days.
-                    </small>
-                  </div>
-                )}
-              </div>
-
-              <div className="flex items-center mt-6">
-                <button
-                  onClick={handleGenerateReport}
-                  disabled={isGeneratingReport}
-                  className="px-4 py-2 bg-[#22c1d4] text-[#06272b] font-bold rounded shadow hover:shadow-lg transition"
-                >
-                  {isGeneratingReport ? 'Generating PDF...' : 'Generate PDF'}
+                <button onClick={handleAddRecipient} className="p-2 bg-[#22c1d4] rounded">
+                  <Plus size={16} />
                 </button>
-                {notification && <span className="ml-4 text-sm text-[#22c1d4]">{notification}</span>}
+              </div>
+              {recipients.length > 0 && (
+                <ul className="mt-2 space-y-1">
+                  {recipients.map((r, i) => (
+                    <li key={i} className="flex items-center gap-2 text-[#eee] text-sm">
+                      <span>{r}</span>
+                      <button
+                        onClick={() =>
+                          setRecipients(recipients.filter((_, idx) => idx !== i))
+                        }
+                        className="text-red-400 hover:text-red-300"
+                      >
+                        <X size={14} />
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+
+            {/* ------------------------- subject/body ---------------------- */}
+            <div>
+              <label className="block text-sm mb-1 text-[#eee]">Oggetto</label>
+              <input
+                type="text"
+                value={subject}
+                onChange={(e) => setSubject(e.target.value)}
+                className="w-full p-2 bg-[#06272b] text-[#eee] rounded border border-[#22c1d4]/20"
+                placeholder="Oggetto email"
+              />
+            </div>
+            <div>
+              <label className="block text-sm mb-1 text-[#eee]">Messaggio</label>
+              <textarea
+                rows={4}
+                value={body}
+                onChange={(e) => setBody(e.target.value)}
+                className="w-full p-2 bg-[#06272b] text-[#eee] rounded border border-[#22c1d4]/20"
+                placeholder="Corpo della mail"
+              />
+            </div>
+
+            {/* ---------------------- when & frequency --------------------- */}
+            <div className="grid md:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm mb-1 text-[#eee]">Invia il</label>
+                <input
+                  type="datetime-local"
+                  value={firstRun}
+                  onChange={(e) => setFirstRun(e.target.value)}
+                  className="w-full p-2 bg-[#06272b] text-[#eee] rounded border border-[#22c1d4]/20"
+                />
+              </div>
+              <div>
+                <label className="block text-sm mb-1 text-[#eee]">Frequenza</label>
+                <select
+                  value={frequency}
+                  onChange={(e) => setFrequency(e.target.value as any)}
+                  className="w-full p-2 bg-[#06272b] text-[#eee] rounded border border-[#22c1d4]/20"
+                >
+                  <option value="once">Una sola volta</option>
+                  <option value="hourly">Ogni ora</option>
+                  <option value="daily">Ogni giorno</option>
+                  <option value="weekly">Ogni settimana</option>
+                  <option value="monthly">Ogni mese</option>
+                  <option value="custom">Custom (intervallo)</option>
+                </select>
               </div>
             </div>
 
-            {reportShouldBlur && (
-              <div className="absolute inset-0 z-10 flex flex-col items-center justify-center text-center px-4 overflow-hidden">
-                <Lock className="w-9 h-9 text-white mb-2" />
-                <span className="text-white text-lg">
-                  Upgrade your subscription to view report generation.
-                </span>
+            {frequency === 'custom' && (
+              <div className="mt-2">
+                <label className="block text-sm mb-1 text-[#eee]">
+                  Intervallo numerico (h ≤24 / d &gt;24)
+                </label>
+                <input
+                  type="number"
+                  value={customInterval}
+                  onChange={(e) => setCustomInterval(Number(e.target.value))}
+                  className="w-full p-2 bg-[#06272b] text-[#eee] rounded border border-[#22c1d4]/20"
+                  placeholder="es. 12 = ore, 48 = giorni"
+                />
               </div>
             )}
+
+            {/* --------------------- CTA & notification -------------------- */}
+            <button
+              onClick={handleSave}
+              className="mt-6 px-4 py-2 bg-[#22c1d4] text-[#06272b] font-bold rounded shadow hover:shadow-lg transition"
+            >
+              Salva Programmazione
+            </button>
+            {notification && (
+              <p className="mt-2 text-sm text-[#22c1d4]">{notification}</p>
+            )}
           </div>
+
+          {shouldBlur && (
+            <div className="absolute inset-0 z-10 flex flex-col items-center justify-center text-center px-4">
+              <Lock className="w-8 h-8 text-white mb-2" />
+              <span className="text-white">
+                Upgrade your subscription to schedule emails.
+              </span>
+            </div>
+          )}
         </div>
       )}
     </>
   );
 }
 
-function HistorySection() {
-  const { user } = useAuth();
-  const [reports, setReports] = useState<any[]>([]);
-  const [schedules, setSchedules] = useState<any[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [cancelNotification, setCancelNotification] = useState<string>('');
-  const [reportSkip, setReportSkip] = useState(0);
-  const [reportLimit] = useState(5);
-  const [hasMoreReports, setHasMoreReports] = useState(true);
-  const API_BASE = import.meta.env.VITE_API_BASE || '/api';
-  const { canAccess: historyCanAccess, shouldBlur: historyShouldBlur } =
-    useSubscriptionPermissions('Reports', 'History Section');
+/* -------------------------------------------------------------------------- */
+/*                   SEZIONE 2 – LISTA / CANCELLA LE MAIL                     */
+/* -------------------------------------------------------------------------- */
 
+function ScheduledEmailsSection() {
+  const { user } = useAuth();
+  const { canAccess, shouldBlur } = useSubscriptionPermissions('Emails', 'History Section');
+
+  const [mailSchedules, setMailSchedules] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [notification, setNotification] = useState('');
+
+  /* -------------------------- load from Firestore ------------------------- */
   useEffect(() => {
-    setReports([]);
-    setReportSkip(0);
-    setHasMoreReports(true);
-    const loadReports = async (skip: number, limit: number) => {
-      if (!user) return;
+    if (!user) return;
+
+    const fetchSchedules = async () => {
       setLoading(true);
       try {
-        const resp = await fetch(
-          `${API_BASE}/reports/list?userId=${user!.id}&company=${user!.company}&reportSkip=${skip}&reportLimit=${limit}`
+        const q = query(
+          collection(firestore, 'ScheduleMail'),
+          where('createdBy', '==', user.id),
+          orderBy('nextRunAt', 'desc')
         );
-        if (!resp.ok) {
-          console.error('Failed to fetch reports and schedules');
-          setLoading(false);
-          return;
-        }
-        const data = await resp.json();
-        const newReports = data.reports || [];
-        setReports(prev => [...prev, ...newReports]);
-        if (newReports.length < limit) {
-          setHasMoreReports(false);
-        }
-        setReportSkip(prev => prev + newReports.length);
-        if (data.schedules) {
-          setSchedules(data.schedules);
-        }
+        const snap = await getDocs(q);
+        const list = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+        setMailSchedules(list);
       } catch (err) {
-        console.error('Error fetching reports and schedules', err);
+        console.error(err);
       } finally {
         setLoading(false);
       }
     };
-    loadReports(0, reportLimit);
-  }, [user, API_BASE, reportLimit]);
 
-  const handleDownload = async (reportId: string, fileName: string) => {
+    fetchSchedules();
+  }, [user]);
+
+  /* ------------------------------ cancel ---------------------------------- */
+  const handleCancel = async (id: string) => {
     try {
-      const resp = await fetch(`${API_BASE}/reports/download/${reportId}`);
-      if (!resp.ok) {
-        alert('Error downloading');
-        return;
-      }
-      const blob = await resp.blob();
-      const url = window.URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = fileName;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(url);
+      await deleteDoc(doc(firestore, 'ScheduleMail', id));
+      setMailSchedules((prev) => prev.filter((m) => m.id !== id));
+      setNotification('Programmazione cancellata.');
     } catch (err) {
-      console.error('Download error', err);
-      alert('Download error');
+      console.error(err);
+      setNotification('Errore nella cancellazione.');
     }
   };
 
-  const handleCancelSchedule = async (scheduleId: string) => {
-    try {
-      const resp = await fetch(`${API_BASE}/reports/schedule/${scheduleId}`, {
-        method: 'DELETE'
-      });
-      if (!resp.ok) {
-        alert('Error cancelling schedule');
-        return;
-      }
-      setSchedules(prev => prev.filter((s: any) => s.id !== scheduleId));
-      setCancelNotification('Schedule cancelled and cancellation email sent.');
-    } catch (err) {
-      console.error('Cancel schedule error', err);
-      alert('Error cancelling schedule');
-    }
-  };
-
-  const dummyReports = [
-    {
-      id: 'dummy-r1',
-      createdAt: new Date().toString(),
-      host: 'dummy-host-1',
-      format: 'pdf',
-      fileName: 'dummy_report_1.pdf',
-      sections: { systemStats: true, usageChart: false },
-    },
-    {
-      id: 'dummy-r2',
-      createdAt: new Date().toString(),
-      host: 'dummy-host-2',
-      format: 'pdf',
-      fileName: 'dummy_report_2.pdf',
-      sections: { capacityChart: true, detailedTable: true },
-    }
-  ];
-
-  const dummySchedules = [
-    {
-      id: 'dummy-sched-1',
-      nextRunAt: new Date().toString(),
-      host: 'dummy-host-1',
-      frequency: 'daily',
-      customInterval: null,
-    },
-    {
-      id: 'dummy-sched-2',
-      nextRunAt: new Date().toString(),
-      host: 'dummy-host-2',
-      frequency: 'custom',
-      customInterval: 12,
-    }
-  ];
-
-  const displayedReports = historyShouldBlur ? dummyReports : reports;
-  const displayedSchedules = historyShouldBlur ? dummySchedules : schedules;
-
+  /* ------------------------------ UI ------------------------------------- */
   return (
     <>
-      {(!historyCanAccess && !historyShouldBlur) ? (
+      {!canAccess && !shouldBlur ? (
         <NoPermission />
       ) : (
-        <div className="max-w-6xl mx-auto p-6 bg-[#0b3c43] rounded-lg shadow-lg space-y-8 relative">
-          <h2 className="text-2xl font-bold flex items-center gap-2">
+        <div className="max-w-5xl mx-auto p-6 bg-[#0b3c43] rounded-lg shadow relative">
+          <h2 className="text-2xl font-bold flex items-center gap-2 mb-4">
             <FaHistory className="text-[#22c1d4]" />
-            <span className="text-[#f8485e]">Report & Schedule History</span>
+            <span className="text-[#f8485e]">Scheduled Emails</span>
           </h2>
 
-          <div className={historyShouldBlur ? 'blur-sm pointer-events-none' : ''}>
-            {loading && <p className="text-center text-[#22c1d4] text-xl">Loading...</p>}
-            {!loading && displayedReports.length === 0 && displayedSchedules.length === 0 && (
-              <p className="text-center text-[#eeeeee] text-lg">No reports or schedules found</p>
+          <div className={shouldBlur ? 'blur-sm pointer-events-none' : ''}>
+            {loading && <p className="text-center text-[#22c1d4]">Loading…</p>}
+            {!loading && mailSchedules.length === 0 && (
+              <p className="text-center text-[#eee]">Nessuna email programmata</p>
             )}
 
-            {displayedReports.length > 0 && (
+            {mailSchedules.length > 0 && (
               <div className="overflow-x-auto">
-                <h3 className="text-xl font-semibold text-[#eeeeee] mb-2 flex items-center gap-1">
-                  <FaFileAlt /> Reports
-                </h3>
                 <table className="w-full table-auto border-separate border-spacing-0">
                   <thead className="bg-[#06272b]">
                     <tr>
-                      <th className="p-2 border text-sm text-[#eeeeee]">
-                        <FaCalendarAlt className="inline mr-1" /> Created
-                      </th>
-                      <th className="p-2 border text-sm text-[#eeeeee]">Host</th>
-                      <th className="p-2 border text-sm text-[#eeeeee]">Format</th>
-                      <th className="p-2 border text-sm text-[#eeeeee]">Sections</th>
-                      <th className="p-2 border text-sm text-[#eeeeee]">Download</th>
+                      <th className="p-2 border text-sm text-[#eee]">Next Run</th>
+                      <th className="p-2 border text-sm text-[#eee]">Recipients</th>
+                      <th className="p-2 border text-sm text-[#eee]">Subject</th>
+                      <th className="p-2 border text-sm text-[#eee]">Frequency</th>
+                      <th className="p-2 border text-sm text-[#eee]">Cancel</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {displayedReports.map((r) => {
-                      const dateStr = new Date(r.createdAt).toLocaleString();
-                      const secArr = Object.entries(r.sections)
-                        .filter(([_, v]) => v)
-                        .map(([k]) => k)
-                        .join(', ');
+                    {mailSchedules.map((m: any) => {
+                      const next = new Date(
+                        m.nextRunAt.seconds * 1000
+                      ).toLocaleString();
+                      const freq =
+                        m.frequency === 'custom'
+                          ? `Every ${m.customInterval}${
+                              m.customInterval && m.customInterval <= 24 ? 'h' : 'd'
+                            }`
+                          : m.frequency;
                       return (
-                        <tr key={r.id} className="hover:bg-[#06272b] transition">
-                          <td className="p-2 border text-sm text-[#eeeeee]">{dateStr}</td>
-                          <td className="p-2 border text-sm text-[#eeeeee]">{r.host}</td>
-                          <td className="p-2 border text-sm text-[#eeeeee]">{r.format}</td>
-                          <td className="p-2 border text-sm text-[#eeeeee]">{secArr}</td>
-                          <td className="p-2 border text-sm">
-                            <button
-                              onClick={() => handleDownload(r.id, r.fileName || 'report')}
-                              disabled={historyShouldBlur}
-                              className="px-3 py-1 rounded bg-[#22c1d4] text-[#06272b] text-sm hover:bg-[#22c1d4]/90 transition disabled:opacity-50"
-                            >
-                              Download
-                            </button>
+                        <tr key={m.id} className="hover:bg-[#06272b] transition">
+                          <td className="p-2 border text-sm text-[#eee]">{next}</td>
+                          <td className="p-2 border text-sm text-[#eee]">
+                            {m.recipients.slice(0, 2).join(', ')}
+                            {m.recipients.length > 2 &&
+                              ` +${m.recipients.length - 2}`}
                           </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-                {!historyShouldBlur && hasMoreReports && (
-                  <div className="mt-4 text-center">
-                    <button
-                      onClick={() => {
-                        const newSkip = reportSkip;
-                        (async () => {
-                          setLoading(true);
-                          try {
-                            const resp = await fetch(
-                              `${API_BASE}/reports/list?userId=${user!.id}&company=${user!.company}&reportSkip=${newSkip}&reportLimit=10`
-                            );
-                            if (!resp.ok) {
-                              console.error('Failed to fetch reports and schedules');
-                              return;
-                            }
-                            const data = await resp.json();
-                            const newReports = data.reports || [];
-                            setReports(prev => [...prev, ...newReports]);
-                            if (newReports.length < 10) {
-                              setHasMoreReports(false);
-                            }
-                            setReportSkip(prev => prev + newReports.length);
-                            if (data.schedules) {
-                              setSchedules(data.schedules);
-                            }
-                          } catch (err) {
-                            console.error('Error fetching reports and schedules', err);
-                          } finally {
-                            setLoading(false);
-                          }
-                        })();
-                      }}
-                      className="px-4 py-2 bg-[#22c1d4] text-[#06272b] font-bold rounded shadow hover:shadow-lg transition"
-                      disabled={loading}
-                    >
-                      {loading ? 'Loading...' : 'Load More Reports'}
-                    </button>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {displayedSchedules.length > 0 && (
-              <div className="overflow-x-auto">
-                <h3 className="text-xl font-semibold text-[#f8485e] mb-2 flex items-center gap-1">
-                  <FaCalendarAlt /> Scheduled Reports
-                </h3>
-                {cancelNotification && (
-                  <p className="text-center text-[#22c1d4] mb-2">{cancelNotification}</p>
-                )}
-                <table className="w-full table-auto border-separate border-spacing-0">
-                  <thead className="bg-[#06272b]">
-                    <tr>
-                      <th className="p-2 border text-sm text-[#eeeeee]">Next Run</th>
-                      <th className="p-2 border text-sm text-[#eeeeee]">Host</th>
-                      <th className="p-2 border text-sm text-[#eeeeee]">Frequency</th>
-                      <th className="p-2 border text-sm text-[#eeeeee]">Cancel</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {displayedSchedules.map((s: any) => {
-                      const nextRun = new Date(s.nextRunAt).toLocaleString();
-                      const freqText = s.frequency === 'custom'
-                        ? `Every ${s.customInterval || 'N/A'} ${s.customInterval && s.customInterval <= 24 ? 'hours' : 'days'}`
-                        : s.frequency;
-                      return (
-                        <tr key={s.id} className="hover:bg-[#06272b] transition">
-                          <td className="p-2 border text-sm text-[#eeeeee]">{nextRun}</td>
-                          <td className="p-2 border text-sm text-[#eeeeee]">{s.host}</td>
-                          <td className="p-2 border text-sm text-[#eeeeee]">{freqText}</td>
+                          <td className="p-2 border text-sm text-[#eee]">
+                            {m.subject || '(no subject)'}
+                          </td>
+                          <td className="p-2 border text-sm text-[#eee]">{freq}</td>
                           <td className="p-2 border text-sm">
                             <button
-                              onClick={() => handleCancelSchedule(s.id)}
-                              disabled={historyShouldBlur}
-                              className="px-3 py-1 rounded bg-red-500 text-[#06272b] text-sm hover:bg-red-400 transition disabled:opacity-50"
+                              onClick={() => handleCancel(m.id)}
+                              disabled={shouldBlur}
+                              className="px-3 py-1 bg-red-500 text-[#06272b] rounded text-sm hover:bg-red-400 transition disabled:opacity-50"
                             >
                               Cancel
                             </button>
@@ -625,13 +336,17 @@ function HistorySection() {
                 </table>
               </div>
             )}
+
+            {notification && (
+              <p className="mt-3 text-center text-sm text-[#22c1d4]">{notification}</p>
+            )}
           </div>
 
-          {historyShouldBlur && (
-            <div className="absolute inset-0 z-10 flex flex-col items-center justify-center text-center px-4 overflow-hidden">
-              <Lock className="w-9 h-9 text-white mb-2" />
-              <span className="text-white text-lg">
-                Upgrade subscription to see Report History
+          {shouldBlur && (
+            <div className="absolute inset-0 z-10 flex flex-col items-center justify-center text-center px-4">
+              <Lock className="w-8 h-8 text-white mb-2" />
+              <span className="text-white">
+                Upgrade your subscription to view history.
               </span>
             </div>
           )}
@@ -641,48 +356,52 @@ function HistorySection() {
   );
 }
 
+/* -------------------------------------------------------------------------- */
+/*                                 ROOT PAGE                                  */
+/* -------------------------------------------------------------------------- */
+
 export default function Reports() {
   const { user, isAuthenticated, isInitializingSession } = useAuth();
-  const [activeTab, setActiveTab] = useState<'generate' | 'history'>('generate');
+  const [activeTab, setActiveTab] = useState<'schedule' | 'history'>('schedule');
 
   if (isInitializingSession) {
     return (
       <div style={{ color: '#eee', textAlign: 'center', padding: '2rem' }}>
-        Loading session...
+        Loading session…
       </div>
     );
   }
-  if (!isAuthenticated || !user) {
-    return <Navigate to="/login" replace />;
-  }
-  // I controlli sui permessi sono gestiti all'interno dei componenti GenerateReportSection e HistorySection.
+  if (!isAuthenticated || !user) return <Navigate to="/login" replace />;
+
   return (
     <div className="min-h-screen p-6">
       <div className="max-w-6xl mx-auto mb-6">
         <div className="flex border-b border-[#06272b] mb-4">
           <button
-            onClick={() => setActiveTab('generate')}
-            className={`flex items-center px-4 py-2 text-lg font-medium transition-colors duration-200 ${
-              activeTab === 'generate'
+            onClick={() => setActiveTab('schedule')}
+            className={`flex items-center px-4 py-2 text-lg font-medium transition-colors ${
+              activeTab === 'schedule'
                 ? 'border-b-2 border-[#f8485e] text-[#f8485e]'
-                : 'text-[#eeeeee] hover:text-[#f8485e]'
+                : 'text-[#eee] hover:text-[#f8485e]'
             }`}
           >
-            <FaFileAlt className="mr-2" /> Generate Report
+            <FaEnvelope className="mr-2" /> Schedule Email
           </button>
           <button
             onClick={() => setActiveTab('history')}
-            className={`flex items-center px-4 py-2 text-lg font-medium transition-colors duration-200 ${
+            className={`flex items-center px-4 py-2 text-lg font-medium transition-colors ${
               activeTab === 'history'
                 ? 'border-b-2 border-[#f8485e] text-[#f8485e]'
-                : 'text-[#eeeeee] hover:text-[#f8485e]'
+                : 'text-[#eee] hover:text-[#f8485e]'
             }`}
           >
-            <FaHistory className="mr-2" /> History & Schedules
+            <FaHistory className="mr-2" /> Scheduled Emails
           </button>
         </div>
-        {activeTab === 'generate' ? <GenerateReportSection /> : <HistorySection />}
+
+        {activeTab === 'schedule' ? <ScheduleEmailSection /> : <ScheduledEmailsSection />}
       </div>
     </div>
   );
 }
+

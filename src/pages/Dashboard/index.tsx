@@ -1,3 +1,5 @@
+// src/pages/Dashboard/index.tsx
+
 import React, { useState } from 'react';
 import { Filter } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
@@ -14,6 +16,16 @@ import { useDashboardData } from './hooks/useDashboardData';
 
 export default function Dashboard() {
   const { user } = useAuth();
+
+  // Se l'utente non c'è (null), mostriamo un loader o redirect
+  if (!user) {
+    return (
+      <div className="flex items-center justify-center h-[60vh]">
+        <LoadingDots />
+      </div>
+    );
+  }
+
   const {
     aggregatedStats,
     filters,
@@ -31,13 +43,13 @@ export default function Dashboard() {
   const [snapUnit, setSnapUnit] = useState<'GB' | 'GiB' | 'TB' | '%'>('TB');
 
   // Subscription permissions
-  const filtersSubscription = useSubscriptionPermissions('Dashboard', 'Filters');
-  const alertsSubscription = useSubscriptionPermissions('Dashboard', 'Alerts Card');
-  const capTrendSubscription = useSubscriptionPermissions('Dashboard', 'Capacity Trends Chart');
-  const statsSubscription = useSubscriptionPermissions('Dashboard', 'System Statistics');
+  const filtersSubscription   = useSubscriptionPermissions('Dashboard', 'Filters');
+  const alertsSubscription    = useSubscriptionPermissions('Dashboard', 'Alerts Card');
+  const capTrendSubscription  = useSubscriptionPermissions('Dashboard', 'Capacity Trends Chart');
+  const statsSubscription     = useSubscriptionPermissions('Dashboard', 'System Statistics');
   const statusChartSubscription = useSubscriptionPermissions('Dashboard', 'System Status Chart');
-  const typesChartSubscription = useSubscriptionPermissions('Dashboard', 'System Types Chart');
-  const capDistSubscription = useSubscriptionPermissions('Dashboard', 'Capacity Distribution Chart');
+  const typesChartSubscription  = useSubscriptionPermissions('Dashboard', 'System Types Chart');
+  const capDistSubscription     = useSubscriptionPermissions('Dashboard', 'Capacity Distribution Chart');
 
   return (
     <div className="max-w-screen-xl mx-auto p-4 space-y-6">
@@ -50,14 +62,16 @@ export default function Dashboard() {
           <span>{filtersOpen ? 'Hide' : 'Show'} Filters</span>
         </button>
       </div>
+
       <FiltersSection
         filters={filters}
         setFilters={setFilters}
         filterOptions={filterOptions}
-        user={user}
+        user={user}                     // ✓ ora guaranteed non-null
         filtersOpen={filtersOpen}
         subscription={filtersSubscription}
       />
+
       <AlertsSection filters={filters} subscription={alertsSubscription} />
 
       {isLoading && !aggregatedStats ? (
@@ -75,11 +89,22 @@ export default function Dashboard() {
             businessMetrics={businessMetrics}
             subscription={statsSubscription}
           />
+
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            <SystemStatusChart aggregatedStats={aggregatedStats} subscription={statusChartSubscription} />
-            <SystemTypesChart aggregatedStats={aggregatedStats} subscription={typesChartSubscription} />
-            <CapacityDistributionChart aggregatedStats={aggregatedStats} subscription={capDistSubscription} />
+            <SystemStatusChart
+              aggregatedStats={aggregatedStats}
+              subscription={statusChartSubscription}
+            />
+            <SystemTypesChart
+              aggregatedStats={aggregatedStats}
+              subscription={typesChartSubscription}
+            />
+            <CapacityDistributionChart
+              aggregatedStats={aggregatedStats}
+              subscription={capDistSubscription}
+            />
           </div>
+
           <CapacityTrendsCharts
             usedUnit={usedUnit}
             setUsedUnit={setUsedUnit}
