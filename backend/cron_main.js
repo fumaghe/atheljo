@@ -31,10 +31,12 @@ if (process.env.ARCHIMEDES_ENV_B64) {
   console.warn('[CRON_MAIN] ARCHIMEDES_ENV_B64 is not defined!');
 }
 
-// Pianifica l'esecuzione periodica di main.py ogni 5 minuti
-cron.schedule('*/5 * * * *', () => {
+// Funzione ricorsiva che esegue main.py e si rischedula 5 minuti dopo la chiusura
+function scheduleMain() {
   if (isCleanupRunning) {
     console.log('[CRON_MAIN] Skipping main.py execution: cleanup in progress');
+    // riproviamo tra 5 minuti
+    setTimeout(scheduleMain, 5 * 60 * 1000);
     return;
   }
 
@@ -52,13 +54,21 @@ cron.schedule('*/5 * * * *', () => {
 
   pyProcess.on('close', (code) => {
     console.log(`[CRON_MAIN] main.py exited with code ${code}`);
-    updateMUP().then(() => {
-      updateAvgTiming();
-    });
+    // Aggiornamenti post-run
+    updateMUP()
+      .then(() => updateAvgTiming())
+      .catch(err => console.error('[CRON_MAIN] Error in post-run updates:', err))
+      .finally(() => {
+        // rischedula la prossima esecuzione tra 5 minuti
+        setTimeout(scheduleMain, 5 * 60 * 1000);
+      });
   });
-});
+}
 
-// Pianifica la pulizia giornaliera alle 23:40
+// Avvia la prima schedulazione al boot
+scheduleMain();
+
+// Manteniamo la pulizia giornaliera alle 23:40
 cron.schedule('40 23 * * *', () => {
   console.log('[CRON_MAIN] Starting firestore_deletion.py at 23:40');
 
