@@ -106,14 +106,17 @@ export function useDashboardData(user: any) {
   useEffect(() => {
     const systemsCollection = collection(firestore, 'system_data')
     const unsubscribe = onSnapshot(systemsCollection, (snapshot) => {
-      const docs = snapshot.docs.map((doc) => {
-        const data = doc.data()
-        return {
-          ...data,
-          sending_telemetry:
-            String(data.sending_telemetry).toLowerCase() === 'true'
-        } as SystemData
-      })
+      const docs = snapshot.docs
+        .map((doc) => {
+          const data = doc.data()
+          return {
+            ...data,
+            sending_telemetry:
+              String(data.sending_telemetry).toLowerCase() === 'true'
+          } as SystemData
+        })
+        // filtro fuori tutte le pool che contengono "/" (i dataset)
+        .filter((s) => !s.pool.includes('/'))
       setRawSystemsDocs(docs)
     })
     return () => unsubscribe()
@@ -186,13 +189,16 @@ export function useDashboardData(user: any) {
       setIsLoading(true)
       const pageSize = 1000
       const queryConstraints: any[] = []
-
+  
       // role-based constraints
       if (user?.role === 'admin_employee') {
         const visibleCompanies = user.visibleCompanies || []
         if (visibleCompanies.length === 1) {
           queryConstraints.push(where('company', '==', visibleCompanies[0]))
-        } else if (visibleCompanies.length > 1 && visibleCompanies.length <= 10) {
+        } else if (
+          visibleCompanies.length > 1 &&
+          visibleCompanies.length <= 10
+        ) {
           queryConstraints.push(where('company', 'in', visibleCompanies))
         }
       } else if (user?.role === 'employee') {
@@ -202,7 +208,7 @@ export function useDashboardData(user: any) {
           queryConstraints.push(where('company', '==', filters.company))
         }
       }
-
+  
       // additional filter constraints
       if (filters.type !== 'all') {
         queryConstraints.push(where('type', '==', filters.type))
@@ -212,15 +218,17 @@ export function useDashboardData(user: any) {
       }
       if (filters.telemetry !== 'all') {
         const shouldBeActive = filters.telemetry === 'active'
-        queryConstraints.push(where('sending_telemetry', '==', shouldBeActive))
+        queryConstraints.push(
+          where('sending_telemetry', '==', shouldBeActive)
+        )
       }
-
+  
       // always order by last_date desc
       const validConstraints = queryConstraints.filter(Boolean)
       let lastDoc: QueryDocumentSnapshot | null = null
       let allRaw: SystemData[] = []
       let fetchedAll = false
-
+  
       while (!fetchedAll) {
         const constraints = [
           ...validConstraints,
@@ -230,18 +238,22 @@ export function useDashboardData(user: any) {
         if (lastDoc) {
           constraints.push(startAfter(lastDoc))
         }
-
-        const qSys = query(collection(firestore, 'system_data'), ...constraints)
+  
+        const qSys = query(
+          collection(firestore, 'system_data'),
+          ...constraints
+        )
         const snap = await getDocs(qSys)
         const newDocs = snap.docs.map((doc) => {
           const d = doc.data()
           return {
             ...d,
-            sending_telemetry: String(d.sending_telemetry).toLowerCase() === 'true'
+            sending_telemetry:
+              String(d.sending_telemetry).toLowerCase() === 'true'
           } as SystemData
         })
-
-        // filter client side if admin_employee with > 10 companies
+  
+        // role-based client filtering for admin_employee
         if (user?.role === 'admin_employee') {
           const visibleCompanies = user.visibleCompanies || []
           if (visibleCompanies.length > 10) {
@@ -256,19 +268,22 @@ export function useDashboardData(user: any) {
         } else {
           allRaw = [...allRaw, ...newDocs]
         }
-
+  
         if (snap.docs.length < pageSize) {
           fetchedAll = true
         } else {
           lastDoc = snap.docs[snap.docs.length - 1]
         }
       }
-
-      // now group by (unit_id -> pool), picking the newest doc
+  
+      // filtriamo fuori i dataset (pool con "/")
+      allRaw = allRaw.filter((sys) => !sys.pool.includes('/'))
+  
+      // raggruppiamo per unit_id → pool, prendendo l'ultima versione
       const days = parseInt(filters.timeRange)
       const cutoff = subDays(new Date(), days)
-
       const unitGroups: Record<string, Record<string, SystemData>> = {}
+  
       for (const sys of allRaw) {
         if (!unitGroups[sys.unit_id]) {
           unitGroups[sys.unit_id] = {}
@@ -284,12 +299,14 @@ export function useDashboardData(user: any) {
           }
         }
       }
-
-      // For each unit_id, pick docs within the last X days or fallback
+  
+      // costruisco l'array finale
       const aggregated: SystemData[] = []
-      for (const [unitId, poolMap] of Object.entries(unitGroups)) {
+      for (const [, poolMap] of Object.entries(unitGroups)) {
         const poolRecords = Object.values(poolMap)
-        let valid = poolRecords.filter((p) => new Date(p.last_date) >= cutoff)
+        let valid = poolRecords.filter(
+          (p) => new Date(p.last_date) >= cutoff
+        )
         if (valid.length === 0) {
           valid = poolRecords
         }
@@ -297,16 +314,18 @@ export function useDashboardData(user: any) {
           aggregated.push(valid[0])
         } else {
           const newest = valid.reduce((prev, curr) =>
-            new Date(prev.last_date) > new Date(curr.last_date) ? prev : curr
+            new Date(prev.last_date) > new Date(curr.last_date)
+              ? prev
+              : curr
           )
           aggregated.push(newest)
         }
       }
-
+  
       setSystemsData(aggregated)
       setIsLoading(false)
     }
-
+  
     fetchAllSystemsProgressively()
   }, [filters, user])
 

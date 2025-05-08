@@ -532,12 +532,12 @@ function SystemDetail() {
       {
         name: 'Snapshots',
         value: Number(snapshotsScore.toFixed(1)),
-        rawValue: currentSystem.used_snap,
-        unit: 'GB',
+        rawValue: Number(currentSystem.used_snap.toFixed(2)),
+        unit: '',
         status: snapshotsScore < 50 ? 'critical' : snapshotsScore < 70 ? 'warning' : 'good',
         message:
           currentSystem.used_snap > 0
-            ? `${currentSystem.used_snap} GB used for snapshots`
+            ? `${currentSystem.used_snap.toFixed(2)} GB used for snapshots`
             : 'No snapshots found',
         impact: 'N/A',
         weight: 10,
@@ -558,7 +558,7 @@ function SystemDetail() {
         name: 'Utilization',
         value: Number(utilizationScore.toFixed(1)),
         rawValue: utilizationScore.toFixed(1),
-        unit: '%',
+        unit: '',
         status: utilizationScore < 50 ? 'critical' : utilizationScore < 70 ? 'warning' : 'good',
         message: 'Avg of Capacity & Snapshots Score',
         impact: 'N/A',
