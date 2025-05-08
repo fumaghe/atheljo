@@ -1,4 +1,4 @@
-# main.py – versione aggiornata 2025-05-08 (inclusa pulizia pool NaN)
+# main.py – versione aggiornata 2025-05-08 (inclusa populazione capacity_trends aggregata)
 import argparse
 import logging
 import os
@@ -49,12 +49,10 @@ class Main:
             .set_index(["hostid", "pool"])["unit_id"]
             .to_dict()
         )
-
-        def map_unit_id(row):
-            base_pool = str(row["pool"]).split("/")[0]
-            return base_unit_map.get((row["hostid"], base_pool), row["unit_id"])
-
-        df_capacity_dataset["unit_id"] = df_capacity_dataset.apply(map_unit_id, axis=1)
+        df_capacity_dataset["unit_id"] = df_capacity_dataset.apply(
+            lambda r: base_unit_map.get((r["hostid"], str(r["pool"]).split("/")[0]), r["unit_id"]),
+            axis=1
+        )
 
         # ------------------------------------------------------------------
         # 2.2 | Aggregazione perc_snap e used_snap dai dataset
@@ -65,8 +63,8 @@ class Main:
             df_datasets
             .groupby(["hostid", "base_pool"])
             .agg({"perc_snap": "sum", "used_snap": "sum"})
-            .rename_axis(index={"base_pool": "pool"})
         )
+        # agg indexed by (hostid, base_pool)
 
         # ------------------------------------------------------------------
         # 3 | Salvataggio CSV (opzionale)
@@ -75,9 +73,7 @@ class Main:
             res_folder = self.config["RESULTS_FOLDER"]
             utils.create_dir(os.path.join(self.directory, res_folder))
             utils.write_results(df_capacity, os.path.join(res_folder, "capacity_data.csv"))
-            utils.write_results(
-                df_capacity_dataset, os.path.join(res_folder, "capacity_dataset.csv")
-            )
+            utils.write_results(df_capacity_dataset, os.path.join(res_folder, "capacity_dataset.csv"))
             utils.write_results(df_systems, os.path.join(res_folder, "systems_data.csv"))
 
         # ------------------------------------------------------------------
@@ -102,28 +98,38 @@ class Main:
             if pd.isna(r["pool"]) or "/" not in r["pool"]:
                 formatted_date = r["date"].replace(" ", "_").replace(":", "-")
                 doc_id = f"{r['hostid']}_{r['pool']}_{formatted_date}"
-                db.collection("capacity_history").document(doc_id).set(
-                    {"hostid": r["hostid"], "pool": r["pool"], "date": r["date"]}
-                )
+                db.collection("capacity_history").document(doc_id).set({
+                    "hostid": r["hostid"],
+                    "pool": r["pool"],
+                    "date": r["date"]
+                })
         logging.info("Firestore capacity_history update completed")
 
-        # ---- pulizia vecchi (>2h) ----------------------------------------
-        capacity_docs = list(db.collection("capacity_history").stream())
-        groups = {}
-        for doc in capacity_docs:
-            data = doc.to_dict()
-            key = (data.get("hostid"), data.get("pool"))
-            dt = pd.to_datetime(data.get("date"), errors="coerce")
-            groups.setdefault(key, []).append((doc, dt))
-        for docs in groups.values():
-            cutoff = max(d for _, d in docs) - pd.Timedelta(hours=2)
-            for d, dt in docs:
-                if dt < cutoff:
-                    d.reference.delete()
-        logging.info("Old capacity_history cleanup done")
+        # ------------------------------------------------------------------
+        # 6 | capacity_trends  (solo pool senza “/”, con agg. dai dataset)
+        # ------------------------------------------------------------------
+        for _, r in df_capacity.iterrows():
+            if pd.isna(r["pool"]) or "/" not in r["pool"]:
+                host = r["hostid"]
+                pool = r["pool"]
+                # calcola somma di snap dai dataset, se esiste
+                key = (host, pool)
+                if key in agg.index:
+                    perc_snap = float(agg.at[key, "perc_snap"])
+                    used_snap = float(agg.at[key, "used_snap"])
+                else:
+                    perc_snap = float(r["perc_snap"])
+                    used_snap = float(r["snap"])
+                data = r.to_dict()
+                data["perc_snap"] = perc_snap
+                data["used_snap"] = used_snap
+                formatted_date = r["date"].replace(" ", "_").replace(":", "-")
+                doc_id = f"{host}_{pool}_{formatted_date}"
+                db.collection("capacity_trends").document(doc_id).set(data)
+        logging.info("Firestore capacity_trends update completed")
 
         # ------------------------------------------------------------------
-        # 6 | capacity_trends_dataset  (solo pool con “/”)
+        # 7 | capacity_trends_dataset  (solo pool con “/”)
         # ------------------------------------------------------------------
         for _, r in df_capacity_dataset.iterrows():
             pool_sanitized = str(r["pool"]).replace("/", "-")
@@ -133,7 +139,7 @@ class Main:
         logging.info("Firestore capacity_trends_dataset update completed")
 
         # ------------------------------------------------------------------
-        # 7 | system_data – salva tutte le colonne (unit_id immutabile)
+        # 8 | system_data – salva tutte le colonne (unit_id immutabile)
         # ------------------------------------------------------------------
         for _, r in df_systems.iterrows():
             host = r["hostid"]
@@ -152,14 +158,11 @@ class Main:
                     data["perc_snap"] = 0.0
                     data["used_snap"] = 0.0
             data.pop("unit_id", None)
-            db.collection("system_data").document(doc_id).set(
-                data,
-                merge=True
-            )
+            db.collection("system_data").document(doc_id).set(data, merge=True)
         logging.info("Firestore system_data update completed")
 
         # ------------------------------------------------------------------
-        # 8 | ArchimedesDB
+        # 9 | ArchimedesDB
         # ------------------------------------------------------------------
         env_value = self.config.get("ENVIRONMENT", "")
         if env_value in ("DEV", "PROD"):
@@ -168,7 +171,7 @@ class Main:
             fs.run_archimedesDB(self.directory)
 
         # ------------------------------------------------------------------
-        # 9 | Cleanup pool NaN in system_data
+        # 10 | Cleanup pool NaN in system_data
         # ------------------------------------------------------------------
         docs = list(db.collection("system_data").stream())
         for doc in docs:
