@@ -60,7 +60,7 @@ const CapacityDistributionChart: React.FC<CapacityDistributionChartProps> = ({ a
         </div>
       )}
       <div className={`${subscription.shouldBlur ? 'blur pointer-events-none' : ''}`}>
-        <h2 className="text-xl text-[#f8485e] font-semibold mb-4 flex items-center gap-2">
+        <h2 className="text-xl text-[#eeeeee] font-semibold mb-4 flex items-center gap-2">
           <HardDrive className="w-5 h-5 text-[#22c1d4]" />
           Capacity Distribution
         </h2>

@@ -301,7 +301,7 @@ export default function CompanyDetail() {
           <div className="flex items-center gap-3">
             <Building2 className="w-8 h-8 text-[#22c1d4]" />
             <div>
-              <h1 className="text-2xl text-[#f8485e] font-bold">{companyStats.name}</h1>
+              <h1 className="text-2xl text-[#eeeeee] font-bold">{companyStats.name}</h1>
               <p className="text-[#eeeeee]/60">
                 {companyStats.totalSystems} Systems • {companyStats.uniquePools} Pools
               </p>

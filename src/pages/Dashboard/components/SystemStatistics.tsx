@@ -29,7 +29,7 @@ const SystemStatistics: React.FC<SystemStatisticsProps> = ({ aggregatedStats, bu
       )}
       <div className={`${subscription.shouldBlur ? 'blur-sm pointer-events-none' : ''}`}>
         <div className="bg-[#0b3c43] rounded-lg p-6 shadow-lg border border-[#22c1d4]/10 transition-all hover:border-[#22c1d4]/30">
-          <h2 className="text-xl text-[#f8485e] font-semibold mb-6 flex items-center gap-2">
+          <h2 className="text-xl text-[#eeeeee] font-semibold mb-6 flex items-center gap-2">
             <Database className="w-6 h-6 text-[#22c1d4]" />
             System Statistics
           </h2>

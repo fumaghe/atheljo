@@ -459,7 +459,7 @@ export default function Companies() {
                   <Building2 className="w-6 h-6 text-[#22c1d4]" />
                 </div>
                 <div>
-                  <h2 className="text-xl text-[#f8485e] font-semibold">
+                  <h2 className="text-xl text-[#eeeeee] font-semibold">
                     {company.name}
                   </h2>
                   <p className="text-[#eeeeee]/60 text-sm">
@@ -607,7 +607,7 @@ export default function Companies() {
                     <Building2 className="w-6 h-6 text-[#22c1d4]" />
                   </div>
                   <div>
-                    <h2 className="text-xl text-[#f8485e] font-semibold">
+                    <h2 className="text-xl text-[#eeeeee] font-semibold">
                       {company.name}
                     </h2>
                     <p className="text-[#eeeeee]/60 text-sm">

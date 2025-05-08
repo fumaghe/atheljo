@@ -181,7 +181,7 @@ const CapacityTrendsCharts: React.FC<CapacityTrendsChartsProps> = ({
           {/* Grafico Used */}
           <div className="flex flex-col flex-1">
             <div className="flex items-center justify-between mb-2">
-              <h2 className="text-xl text-[#f8485e] font-semibold flex items-center gap-2">
+              <h2 className="text-xl text-[#eeeeee] font-semibold flex items-center gap-2">
                 <Database className="w-6 h-6 text-[#22c1d4]" />
                 Usage Trends
               </h2>
@@ -204,7 +204,7 @@ const CapacityTrendsCharts: React.FC<CapacityTrendsChartsProps> = ({
           {/* Grafico Snapshots */}
           <div className="flex flex-col flex-1">
             <div className="flex items-center justify-between mb-2">
-              <h2 className="text-xl text-[#f8485e] font-semibold flex items-center gap-2">
+              <h2 className="text-xl text-[#eeeeee] font-semibold flex items-center gap-2">
                 <HardDrive className="w-6 h-6 text-[#22c1d4]" />
                 Snapshots Trends
               </h2>

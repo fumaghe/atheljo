@@ -56,7 +56,7 @@ const SystemTypesChart: React.FC<SystemTypesChartProps> = ({ aggregatedStats, su
         </div>
       )}
       <div className={`${subscription.shouldBlur ? 'blur pointer-events-none' : ''}`}>
-        <h2 className="text-xl text-[#f8485e] font-semibold mb-4 flex items-center gap-2">
+        <h2 className="text-xl text-[#eeeeee] font-semibold mb-4 flex items-center gap-2">
           <Server className="w-5 h-5 text-[#22c1d4]" />
           System Types
         </h2>

@@ -906,7 +906,7 @@ function SystemDetail() {
 
       {/* BLOCCO - ELENCO HOSTID */}
       <div className="bg-[#0b3c43] rounded-lg p-6 shadow-lg border border-[#22c1d4]/10">
-        <h2 className="text-xl text-[#f8485e] font-semibold flex items-center gap-2 mb-4">
+        <h2 className="text-xl text-[#eeeeee] font-semibold flex items-center gap-2 mb-4">
           <Server className="h-6 w-6 text-[#22c1d4]" />
           HostID Overview
         </h2>
@@ -962,7 +962,7 @@ function SystemDetail() {
       <div className="bg-[#0b3c43] rounded-lg p-6 shadow-lg border border-[#22c1d4]/10">
         <div className="flex items-start justify-between mb-6">
           <div>
-            <h2 className="text-xl text-[#f8485e] font-semibold flex items-center gap-2">
+            <h2 className="text-xl text-[#eeeeee] font-semibold flex items-center gap-2">
               <Gauge className="h-6 w-6 text-[#22c1d4]" />
               System Health Score
             </h2>
@@ -1017,7 +1017,7 @@ function SystemDetail() {
         <div className="bg-[#0b3c43] rounded-lg p-6 shadow-lg border border-[#22c1d4]/10">
           <div className="flex items-center gap-2 mb-6">
             <TrendingUp className="w-6 h-6 text-[#22c1d4]" />
-            <h2 className="text-xl text-[#f8485e] font-semibold">Capacity Forecast</h2>
+            <h2 className="text-xl text-[#eeeeee] font-semibold">Capacity Forecast</h2>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             {renderForecastBox('Time to 70% Capacity', forecastData.time_to_70, 'Days', t80Can, t80Blur, '#22c1d4')}
@@ -1031,7 +1031,7 @@ function SystemDetail() {
       <div className="bg-[#0b3c43] rounded-lg p-6 shadow-lg border border-[#22c1d4]/10">
         <div className="flex items-center gap-2 mb-6">
           <Activity className="w-6 h-6 text-[#22c1d4]" />
-          <h2 className="text-xl text-[#f8485e] font-semibold">Behaviour Analysis</h2>
+          <h2 className="text-xl text-[#eeeeee] font-semibold">Behaviour Analysis</h2>
         </div>
         {systemData && (
           <StateVectorChart unitId={systemData.unit_id} pool={systemData.pool} hostId={systemData.hostid} />
@@ -1045,7 +1045,7 @@ function SystemDetail() {
             <div className="flex items-center justify-between mb-6">
               <div className="flex items-center gap-2">
                 <TrendingUp className="w-6 h-6 text-[#22c1d4]" />
-                <h2 className="text-xl text-[#f8485e] font-semibold">Usage History</h2>
+                <h2 className="text-xl text-[#eeeeee] font-semibold">Usage History</h2>
               </div>
               <div className="flex gap-3">
                 <select
@@ -1094,7 +1094,7 @@ function SystemDetail() {
           <div className={chartForeBlur ? 'blur-sm pointer-events-none' : ''}>
             <div className="flex items-center gap-2 mb-6">
               <BarChart className="w-6 h-6 text-[#22c1d4]" />
-              <h2 className="text-xl text-[#f8485e] font-semibold">Usage Forecast</h2>
+              <h2 className="text-xl text-[#eeeeee] font-semibold">Usage Forecast</h2>
             </div>
             <div className="h-[400px]">
               <Line key={`forecast-${timeRange}-${usageUnit}`} data={displayedForecast} options={chartOptions} redraw />
