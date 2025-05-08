@@ -1,50 +1,41 @@
 import pandas as pd
-from pydantic import BaseModel, Field
-from typing import List, Optional
-import datetime
 import logging
-from scipy.constants import giga
-from datetime import datetime, timedelta
-import numpy as np
-import utils 
+from datetime import timedelta
+import utils
 
 MAX_TIMEFRAME_HOURS = 24
 
 
+# ------------------------------------------------------------------------------
+# CAPACITY TRENDS – SOLO POOL SENZA “/”
+# ------------------------------------------------------------------------------
 def capacity_trends_table(raw_data_telemetry: pd.DataFrame) -> pd.DataFrame:
-    """ 
-    Process telemetry data and return the 'capacity_trends' table.
-    
-    Input:
-        raw_data_telemetry: pd.DataFrame with columns [hostid, editdate, ref_time, pool, avail, used, snap, ratio]
-    Output:
-        pd.DataFrame with columns (in order):
-        ["date", "day", "hostid", "perc_snap", "perc_used", "pool", "snap", "total_space", "unit_id", "used"]
+    """
+    Ritorna il dataframe per la tabella *capacity_trends*,
+    ESCLUDENDO le pool che contengono “/”.
     """
     raw_df = raw_data_telemetry.copy()
-    
-    # Filter out pools that contain '/'
-    df = raw_df[~raw_df['pool'].str.contains('/')]
-    
+    df = raw_df[~raw_df["pool"].str.contains("/")]
+
     df["date"] = pd.to_datetime(df["editdate"])
-    df["day"] = df["date"].dt.strftime('%Y-%m-%d')
-    df["date"] = df["date"].dt.strftime('%Y-%m-%d %H:%M:%S')
-    
-    # For testing, unit_id is set as "hostid-pool"
-    df["unit_id"] = df.apply(lambda row: f"{row['hostid']}-{row['pool']}", axis=1)
-    
+    df["day"] = df["date"].dt.strftime("%Y-%m-%d")
+    df["date"] = df["date"].dt.strftime("%Y-%m-%d %H:%M:%S")
+
+    df["unit_id"] = df.apply(lambda r: f"{r['hostid']}-{r['pool']}", axis=1)
+
     df["total"] = df["avail"] + df["used"]
-    df["total_space"] = df["total"].apply(lambda x: utils.byte_to_giga(x))
-    
-    # Temporary columns for calculation
+    df["total_space"] = df["total"].apply(utils.byte_to_giga)
+
     df["used_over_total"] = df["used"] / df["total"]
-    df["snap_over_total"] = (df["snap"] / df["total"]).mask(df["snap"] / df["total"] < 0.01, 0.0)
-    df["perc_used"] = df.apply(lambda row: utils.set_to_percentage(row["used_over_total"]), axis=1)
-    df["perc_snap"] = df.apply(lambda row: utils.set_to_percentage(row["snap_over_total"]), axis=1)
-    
-    df["used"] = df["used"].apply(lambda x: utils.byte_to_giga(x))
-    df["snap"] = df["snap"].apply(lambda x: utils.byte_to_giga(x))
-    
+    df["snap_over_total"] = (df["snap"] / df["total"]).mask(
+        df["snap"] / df["total"] < 0.01, 0.0
+    )
+    df["perc_used"] = df["used_over_total"].apply(utils.set_to_percentage)
+    df["perc_snap"] = df["snap_over_total"].apply(utils.set_to_percentage)
+
+    df["used"] = df["used"].apply(utils.byte_to_giga)
+    df["snap"] = df["snap"].apply(utils.byte_to_giga)
+
     df = df[
         [
             "date",
@@ -56,114 +47,181 @@ def capacity_trends_table(raw_data_telemetry: pd.DataFrame) -> pd.DataFrame:
             "snap",
             "total_space",
             "unit_id",
-            "used"
+            "used",
         ]
     ]
-    
-    # Remove duplicate rows based on certain columns
-    df_filtered = df.drop_duplicates(subset=[
-        'day',        
-        'hostid',
-        'perc_snap',
-        'pool',
-        'snap',
-    ], inplace=False)
-    
-    logging.info(f"Filtering telemetry values: skipped {df.shape[0] - df_filtered.shape[0]} rows")
-    
+
+    df_filtered = df.drop_duplicates(
+        subset=["day", "hostid", "perc_snap", "pool", "snap"], inplace=False
+    )
+
+    logging.info(
+        f"Filtering telemetry values: skipped {df.shape[0] - df_filtered.shape[0]} rows"
+    )
     return df_filtered
 
 
-def systems_data_table(raw_data_companies: pd.DataFrame, raw_data_telemetry: pd.DataFrame) -> pd.DataFrame:
-    """ 
-    Process companies data and telemetry data to create the 'systems_data' table.
-    
-    For each system (identified by hostid), a left join is performed with telemetry data
-    to include systems that are not currently sending telemetry. In such cases, metrics are set to default values.
-    
-    Output:
-        pd.DataFrame with columns (in order):
-        ["MUP", "avail", "avg_speed", "avg_time", "company", "first_date", "hostid", "last_date",
-         "name", "perc_snap", "perc_used", "pool", "sending_telemetry", "type", "unit_id", "used", "used_snap"]
+# ------------------------------------------------------------------------------
+# CAPACITY TRENDS DATASET – SOLO POOL CON “/”
+# ------------------------------------------------------------------------------
+def capacity_trends_dataset_table(raw_data_telemetry: pd.DataFrame) -> pd.DataFrame:
     """
-    # Copy input dataframes
+    Ritorna il dataframe per la tabella *capaciity_trends_dataset*,
+    CONTENENTE esclusivamente le pool che includono “/”.
+    """
+    raw_df = raw_data_telemetry.copy()
+    df = raw_df[raw_df["pool"].str.contains("/")]
+
+    df["date"] = pd.to_datetime(df["editdate"])
+    df["day"] = df["date"].dt.strftime("%Y-%m-%d")
+    df["date"] = df["date"].dt.strftime("%Y-%m-%d %H:%M:%S")
+
+    # unit_id provvisorio (sarà mappato in main.py)
+    df["unit_id"] = df.apply(lambda r: f"{r['hostid']}-{r['pool']}", axis=1)
+
+    df["total"] = df["avail"] + df["used"]
+    df["total_space"] = df["total"].apply(utils.byte_to_giga)
+
+    df["used_over_total"] = df["used"] / df["total"]
+    df["snap_over_total"] = (df["snap"] / df["total"]).mask(
+        df["snap"] / df["total"] < 0.01, 0.0
+    )
+    df["perc_used"] = df["used_over_total"].apply(utils.set_to_percentage)
+    df["perc_snap"] = df["snap_over_total"].apply(utils.set_to_percentage)
+
+    df["used"] = df["used"].apply(utils.byte_to_giga)
+    df["snap"] = df["snap"].apply(utils.byte_to_giga)
+
+    df = df[
+        [
+            "date",
+            "day",
+            "hostid",
+            "perc_snap",
+            "perc_used",
+            "pool",
+            "snap",
+            "total_space",
+            "unit_id",
+            "used",
+        ]
+    ]
+
+    df_filtered = df.drop_duplicates(
+        subset=["day", "hostid", "perc_snap", "pool", "snap"], inplace=False
+    )
+    return df_filtered
+
+
+# ------------------------------------------------------------------------------
+# SYSTEMS DATA
+# ------------------------------------------------------------------------------
+def systems_data_table(
+    raw_data_companies: pd.DataFrame, raw_data_telemetry: pd.DataFrame
+) -> pd.DataFrame:
+    """
+    Crea la tabella *systems_data*.
+    Ora INCLUDE anche le pool con “/” e mappa il loro unit_id
+    su quello della pool “base” (prima del primo “/”).
+    """
     df_companies = raw_data_companies.copy()
     df_telemetry = raw_data_telemetry.copy()
-    
-    # Filter telemetry rows where pool does NOT contain '/'
-    df_telemetry = df_telemetry[~df_telemetry['pool'].str.contains('/')].copy()
-    df_telemetry['editdate_dt'] = pd.to_datetime(df_telemetry['editdate'], errors='coerce')
-    
-    # Calculate average time difference (in minutes) between telemetry transmissions per (hostid, pool)
-    df_telemetry = df_telemetry.sort_values(by='editdate_dt')
+    df_telemetry["editdate_dt"] = pd.to_datetime(
+        df_telemetry["editdate"], errors="coerce"
+    )
+
+    # ---------------- avg_time fra trasmissioni -----------------
+    df_telemetry = df_telemetry.sort_values("editdate_dt")
+
     def avg_time_diff(group):
-        diffs = group['editdate_dt'].diff().dropna()
+        diffs = group["editdate_dt"].diff().dropna()
         return diffs.mean().total_seconds() / 60.0 if not diffs.empty else 0.0
-    avg_times = df_telemetry.groupby(['hostid', 'pool']).apply(avg_time_diff).to_frame(name='avg_time').reset_index()
-    avg_times['avg_time'] = avg_times['avg_time'].round(2)
-    
-    # Left join companies data with telemetry data to include all systems
-    df = pd.merge(df_companies, df_telemetry, on="hostid", how="left", suffixes=('', '_tele'))
-    
-    # Convert editdate to datetime for proper ordering
-    df['editdate_dt'] = pd.to_datetime(df['editdate'], errors='coerce')
-    
-    # For duplicate telemetry records, select the one with the latest editdate
-    df_latest = df.sort_values(by='editdate_dt').groupby(['hostid', 'pool'], dropna=False).last().reset_index()
-    
-    # For systems without telemetry data, fill missing values with 0
-    for col in ['avail', 'used', 'snap', 'ratio']:
+
+    avg_times = (
+        df_telemetry.groupby(["hostid", "pool"])
+        .apply(avg_time_diff)
+        .to_frame("avg_time")
+        .reset_index()
+    )
+    avg_times["avg_time"] = avg_times["avg_time"].round(2)
+
+    # ---------------- merge companies + telemetry --------------
+    df = pd.merge(df_companies, df_telemetry, on="hostid", how="left", suffixes=("", "_t"))
+    df["editdate_dt"] = pd.to_datetime(df["editdate"], errors="coerce")
+
+    df_latest = (
+        df.sort_values("editdate_dt")
+        .groupby(["hostid", "pool"], dropna=False)
+        .last()
+        .reset_index()
+    )
+
+    for col in ["avail", "used", "snap", "ratio"]:
         df_latest[col] = df_latest[col].fillna(0)
-    
-    # Set unit_id: if "pool" is missing, use only hostid; otherwise hostid-pool
+
+    # ---------------- unit_id di default ------------------------
     df_latest["unit_id"] = df_latest.apply(
-        lambda row: f"{row['hostid']}-{row['pool']}" if pd.notnull(row['pool']) else str(row['hostid']),
-        axis=1
+        lambda r: f"{r['hostid']}-{r['pool']}"
+        if pd.notnull(r["pool"])
+        else str(r["hostid"]),
+        axis=1,
     )
-    
-    # Set "name" using the hostname from companies data
-    df_latest["name"] = df_latest["hostname"]
-    
-    # Set the "type" field based on the version, if available
-    df_latest["type"] = df_latest['version'].apply(
-        lambda x: f"AiRE {'.'.join(x.split('.')[:2])}" if pd.notnull(x) else None
+
+    # ---------------- mapping unit_id per pool con “/” ----------
+    base_map = (
+        df_latest[df_latest["pool"].notna() & ~df_latest["pool"].str.contains("/")]
+        .set_index(["hostid", "pool"])["unit_id"]
+        .to_dict()
     )
-    
-    # Calculate total space and percentage fields (if telemetry data exists)
+
+    def map_unit_id(row):
+        if pd.isna(row["pool"]) or "/" not in str(row["pool"]):
+            return row["unit_id"]
+        base_pool = str(row["pool"]).split("/")[0]
+        return base_map.get((row["hostid"], base_pool), row["unit_id"])
+
+    df_latest["unit_id"] = df_latest.apply(map_unit_id, axis=1)
+
+    # ---------------- campi calcolati ---------------------------
     df_latest["total_space"] = df_latest["avail"] + df_latest["used"]
     df_latest["used_over_total"] = df_latest.apply(
-        lambda row: row["used"] / row["total_space"] if row["total_space"] > 0 else 0,
-        axis=1
+        lambda r: r["used"] / r["total_space"] if r["total_space"] > 0 else 0, axis=1
     )
     df_latest["snap_over_total"] = df_latest.apply(
-        lambda row: row["snap"] / row["total_space"] if row["total_space"] > 0 else 0,
-        axis=1
+        lambda r: r["snap"] / r["total_space"] if r["total_space"] > 0 else 0, axis=1
     )
-    df_latest["perc_used"] = df_latest["used_over_total"].apply(lambda x: utils.set_to_percentage(x))
-    df_latest["perc_snap"] = df_latest["snap_over_total"].apply(lambda x: utils.set_to_percentage(x))
-    
-    # Convert byte values to gigabytes
-    df_latest["avail"] = df_latest["avail"].apply(lambda x: utils.byte_to_giga(x))
-    df_latest["used"] = df_latest["used"].apply(lambda x: utils.byte_to_giga(x))
-    df_latest["used_snap"] = df_latest["snap"].apply(lambda x: utils.byte_to_giga(x))
-    
-    # Process last_date (from companies data) to determine if telemetry is currently being sent
-    df_latest["last_date"] = pd.to_datetime(df_latest["last_date"], errors='coerce')
-    is_sending = (pd.Timestamp.now() - df_latest["last_date"]) <= pd.Timedelta(hours=MAX_TIMEFRAME_HOURS)
-    df_latest["sending_telemetry"] = is_sending.fillna(False).map({True: "True", False: "False"})
-    
-    # Merge in the average time information
-    df_latest = pd.merge(df_latest, avg_times, on=['hostid', 'pool'], how='left')
+    df_latest["perc_used"] = df_latest["used_over_total"].apply(utils.set_to_percentage)
+    df_latest["perc_snap"] = df_latest["snap_over_total"].apply(utils.set_to_percentage)
+
+    df_latest["avail"] = df_latest["avail"].apply(utils.byte_to_giga)
+    df_latest["used"] = df_latest["used"].apply(utils.byte_to_giga)
+    df_latest["used_snap"] = df_latest["snap"].apply(utils.byte_to_giga)
+
+    # ---------------- sending_telemetry -------------------------
+    df_latest["last_date"] = pd.to_datetime(df_latest["last_date"], errors="coerce")
+    is_sending = (pd.Timestamp.now() - df_latest["last_date"]) <= timedelta(
+        hours=MAX_TIMEFRAME_HOURS
+    )
+    df_latest["sending_telemetry"] = is_sending.fillna(False).map(
+        {True: "True", False: "False"}
+    )
+
+    # ---------------- merge avg_time ----------------------------
+    df_latest = pd.merge(df_latest, avg_times, on=["hostid", "pool"], how="left")
     df_latest["avg_speed"] = df_latest["avg_time"]
-    
-    # Placeholder for the "MUP" field
+
+    # ---------------- altri campi -------------------------------
     df_latest["MUP"] = pd.NA
-    
-    # Format "first_date" and "last_date" fields as strings
-    df_latest["first_date"] = pd.to_datetime(df_latest["first_date"], errors='coerce').dt.strftime('%Y-%m-%d %H:%M:%S')
-    df_latest["last_date"] = df_latest["last_date"].dt.strftime('%Y-%m-%d %H:%M:%S')
-    
-    # Reorder columns according to the specified schema
+    df_latest["first_date"] = (
+        pd.to_datetime(df_latest["first_date"], errors="coerce")
+        .dt.strftime("%Y-%m-%d %H:%M:%S")
+    )
+    df_latest["last_date"] = df_latest["last_date"].dt.strftime("%Y-%m-%d %H:%M:%S")
+    df_latest["name"] = df_latest["hostname"]
+    df_latest["type"] = df_latest["version"].apply(
+        lambda v: f"AiRE {'.'.join(v.split('.')[:2])}" if pd.notnull(v) else None
+    )
+
     df_final = df_latest[
         [
             "MUP",
@@ -182,8 +240,7 @@ def systems_data_table(raw_data_companies: pd.DataFrame, raw_data_telemetry: pd.
             "type",
             "unit_id",
             "used",
-            "used_snap"
+            "used_snap",
         ]
     ]
-    
     return df_final
