@@ -547,7 +547,7 @@ function SystemDetail() {
         name: 'MUP',
         value: Number(mupScore.toFixed(1)),
         rawValue: currentSystem.MUP,
-        unit: '',
+        unit: 'TB',
         status: mupScore < 50 ? 'critical' : mupScore < 60 ? 'warning' : 'good',
         message: 'Resource usage patterns',
         impact: 'N/A',
