@@ -1,8 +1,9 @@
-# main.py – versione aggiornata 2025-05-08
+# main.py – versione aggiornata 2025-05-08 (inclusa pulizia pool NaN)
 import argparse
 import logging
 import os
 import time
+import math
 from dotenv import load_dotenv, dotenv_values
 
 import pandas as pd
@@ -58,7 +59,6 @@ class Main:
         # ------------------------------------------------------------------
         # 2.2 | Aggregazione perc_snap e used_snap dai dataset
         # ------------------------------------------------------------------
-        # Filtra solo i dataset (pool con "/"), estrae base_pool, somma i due campi
         df_datasets = df_systems[df_systems["pool"].str.contains("/", na=False)].copy()
         df_datasets["base_pool"] = df_datasets["pool"].str.split("/", n=1).str[0]
         agg = (
@@ -67,7 +67,6 @@ class Main:
             .agg({"perc_snap": "sum", "used_snap": "sum"})
             .rename_axis(index={"base_pool": "pool"})
         )
-        # agg è un DataFrame con MultiIndex (hostid, pool) e colonne perc_snap, used_snap
 
         # ------------------------------------------------------------------
         # 3 | Salvataggio CSV (opzionale)
@@ -79,9 +78,7 @@ class Main:
             utils.write_results(
                 df_capacity_dataset, os.path.join(res_folder, "capacity_dataset.csv")
             )
-            utils.write_results(
-                df_systems, os.path.join(res_folder, "systems_data.csv")
-            )
+            utils.write_results(df_systems, os.path.join(res_folder, "systems_data.csv"))
 
         # ------------------------------------------------------------------
         # 4 | Firestore Init
@@ -141,14 +138,11 @@ class Main:
         for _, r in df_systems.iterrows():
             host = r["hostid"]
             pool = r["pool"]
-            # costruisci document ID
             if pd.isna(pool):
                 doc_id = f"{host}"
             else:
                 doc_id = f"{host}_{str(pool).replace('/', '-')}"
-            # dict di tutti i campi
             data = r.to_dict()
-            # 7.1: se è pool principale (senza "/"), sovrascrivo perc_snap e used_snap con la somma dei dataset
             if pd.isna(pool) or "/" not in str(pool):
                 key = (host, pool)
                 if key in agg.index:
@@ -157,19 +151,12 @@ class Main:
                 else:
                     data["perc_snap"] = 0.0
                     data["used_snap"] = 0.0
-            # 7.2: rimuovo unit_id per non toccarlo in Firestore
             data.pop("unit_id", None)
             db.collection("system_data").document(doc_id).set(
                 data,
                 merge=True
             )
         logging.info("Firestore system_data update completed")
-
-        # ---- (opzionale) elimina documenti host-only se non servono -------
-        # for doc in db.collection("system_data").stream():
-        #     if "_" not in doc.id:
-        #         doc.reference.delete()
-        # logging.info("Deletion of old system_data documents completed")
 
         # ------------------------------------------------------------------
         # 8 | ArchimedesDB
@@ -179,6 +166,18 @@ class Main:
             fs.run_archimedesDB(self.directory, "requirements.json")
         else:
             fs.run_archimedesDB(self.directory)
+
+        # ------------------------------------------------------------------
+        # 9 | Cleanup pool NaN in system_data
+        # ------------------------------------------------------------------
+        docs = list(db.collection("system_data").stream())
+        for doc in docs:
+            data = doc.to_dict()
+            pool_val = data.get("pool")
+            if isinstance(pool_val, float) and math.isnan(pool_val):
+                doc.reference.delete()
+                logging.info(f"Deleted system_data doc '{doc.id}' because pool is NaN")
+        logging.info("Cleanup of system_data documents with NaN pool completed")
 
 
 # ----------------------------------------------------------------------

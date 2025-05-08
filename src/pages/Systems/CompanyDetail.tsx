@@ -1,3 +1,4 @@
+// src/pages/Systems/CompanyDetail.tsx
 import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
@@ -8,7 +9,6 @@ import {
   Building2,
   Database,
   Signal,
-  ChevronRight,
   Lock
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
@@ -22,7 +22,7 @@ interface SystemData {
   name: string;
   hostid: string;
   pool: string;
-  unit_id: string; // Campo per collegare hostid e pool insieme
+  unit_id: string;
   type: string;
   used: number;
   avail: number;
@@ -30,16 +30,15 @@ interface SystemData {
   perc_used: number;
   perc_snap: number;
   sending_telemetry: boolean;
-  telemetryDelay: number; // in minuti
+  telemetryDelay: number;
   first_date: string;
   last_date: string;
   MUP: number;
   avg_speed: number;
-  avg_time: number; // già in minuti
+  avg_time: number;
   company: string;
 }
 
-// Interface per i sistemi aggregati: l'aggregazione per pool è fatta soltanto se i record appartengono allo stesso unit_id
 interface AggregatedSystem extends SystemData {
   pools: string[];
   count: number;
@@ -79,13 +78,9 @@ export default function CompanyDetail() {
     status: 'all',
     telemetry: 'active'
   });
-  const [searchTerm, setSearchTerm] = useState('');
 
-  // Hook per "System Status"
   const { canAccess: statusCanAccess, shouldBlur: statusShouldBlur } =
     useSubscriptionPermissions('CompaniesDetail', 'System Status');
-
-  // Hook per "System Health Score"
   const { canAccess: scoreCanAccess, shouldBlur: scoreShouldBlur } =
     useSubscriptionPermissions('CompaniesDetail', 'System Health Score');
 
@@ -94,25 +89,31 @@ export default function CompanyDetail() {
       try {
         setIsLoading(true);
         setError(null);
-        // Recupera i sistemi dalla collection "system_data" filtrando per company
+
+        // 1) Recupera i sistemi per questa company
         const systemsRef = collection(firestore, 'system_data');
-        const q = query(systemsRef, where('company', '==', decodeURIComponent(companyName!)));
+        const q = query(
+          systemsRef,
+          where('company', '==', decodeURIComponent(companyName!))
+        );
         const querySnapshot = await getDocs(q);
-        const rawSystems: SystemData[] = [];
-        querySnapshot.forEach((doc) => {
-          const data = doc.data();
-          rawSystems.push({
+
+        // 2) Mappa e filtra i record: escludi i dataset (pool che contengono '/')
+        const rawSystems: SystemData[] = querySnapshot.docs
+          .map(doc => doc.data() as any)
+          .map(data => ({
             name: data.name || '',
             hostid: data.hostid || '',
             pool: data.pool || '',
-            unit_id: data.unit_id || '', // Lettura del nuovo campo unit_id
+            unit_id: data.unit_id || '',
             type: data.type || '',
             used: Number(data.used),
             avail: Number(data.avail),
             used_snap: Number(data.used_snap),
             perc_used: Number(data.perc_used),
             perc_snap: Number(data.perc_snap),
-            sending_telemetry: String(data.sending_telemetry).toLowerCase() === 'true',
+            sending_telemetry:
+              String(data.sending_telemetry).toLowerCase() === 'true',
             telemetryDelay: Number(data.telemetryDelay) || 0,
             first_date: data.first_date || '',
             last_date: data.last_date || '',
@@ -120,86 +121,78 @@ export default function CompanyDetail() {
             avg_speed: Number(data.avg_speed),
             avg_time: Number(data.avg_time),
             company: data.company || ''
+          }))
+          .filter(sys => {
+            // includi se pool non è stringa o non contiene '/'
+            if (typeof sys.pool !== 'string') return true;
+            return !sys.pool.includes('/');
           });
-        });
 
-        // Raggruppa per unit_id e poi per pool all’interno dello stesso unit_id.
-        const unitGroups: { [unitId: string]: { [pool: string]: SystemData } } = {};
+        // 3) Raggruppa per unit_id e pool come prima...
+        const unitGroups: Record<string, Record<string, SystemData>> = {};
         rawSystems.forEach(system => {
           if (!unitGroups[system.unit_id]) {
             unitGroups[system.unit_id] = {};
           }
-          // Raggruppa per pool (all’interno dello stesso unit_id): se già presente, prendi quello con last_date più recente.
-          if (!unitGroups[system.unit_id][system.pool]) {
+          const existing = unitGroups[system.unit_id][system.pool];
+          if (!existing) {
             unitGroups[system.unit_id][system.pool] = system;
-          } else if (new Date(system.last_date) > new Date(unitGroups[system.unit_id][system.pool].last_date)) {
+          } else if (new Date(system.last_date) > new Date(existing.last_date)) {
             unitGroups[system.unit_id][system.pool] = system;
           }
         });
 
-        // Calcola la data di cutoff: 1 mese fa dalla data corrente.
+        // 4) Aggregazione con cutoff di 1 mese
         const now = new Date();
         const cutoff = new Date(now);
         cutoff.setMonth(now.getMonth() - 1);
 
-        // Per ogni unità, filtra i record per pool:
-        // - Se esistono record con last_date ≥ cutoff, li si utilizza.
-        // - Se non ce ne sono, allora si usa comunque l’insieme completo dei record (ossia, la pool con la last_date più recente, anche se "vecchia")
         const aggregatedSystems: AggregatedSystem[] = [];
-        Object.keys(unitGroups).forEach(unitId => {
-          const poolRecords = Object.values(unitGroups[unitId]);
-          let validPoolRecords = poolRecords.filter(record => new Date(record.last_date) >= cutoff);
-          if (validPoolRecords.length === 0) {
-            // Fallback: usa tutti i record di quella unità
-            validPoolRecords = poolRecords;
-          }
-          const count = validPoolRecords.length;
-          // Se c'è un solo record valido, lo usiamo direttamente; altrimenti, tra i validi, prendiamo quello con la last_date più recente.
-          if (count === 1) {
-            const record = validPoolRecords[0];
-            aggregatedSystems.push({
-              ...record,
-              pools: [record.pool],
-              count
-            });
+        Object.entries(unitGroups).forEach(([unitId, poolsMap]) => {
+          let poolRecords = Object.values(poolsMap);
+          let valid = poolRecords.filter(r => new Date(r.last_date) >= cutoff);
+          if (valid.length === 0) valid = poolRecords;
+          let record: SystemData;
+          if (valid.length === 1) {
+            record = valid[0];
           } else {
-            const representativeRecord = validPoolRecords.reduce((prev, curr) =>
+            record = valid.reduce((prev, curr) =>
               new Date(prev.last_date) > new Date(curr.last_date) ? prev : curr
             );
-            aggregatedSystems.push({
-              ...representativeRecord,
-              pools: [representativeRecord.pool],
-              count
-            });
           }
+          aggregatedSystems.push({
+            ...record,
+            pools: [record.pool],
+            count: valid.length
+          });
         });
 
         setSystems(aggregatedSystems);
 
-        // Calcola le statistiche della company basandosi sui sistemi aggregati
+        // 5) Calcolo statistiche azienda
         const totalCapacity = aggregatedSystems.reduce((sum, s) => sum + s.avail, 0);
         const usedCapacity = aggregatedSystems.reduce((sum, s) => sum + s.used, 0);
-        const avgUsage = aggregatedSystems.reduce((sum, s) => sum + s.perc_used, 0) / aggregatedSystems.length;
-        const poolSet = new Set<string>();
-        aggregatedSystems.forEach(s => s.pools.forEach(pool => poolSet.add(pool)));
-        const uniquePools = poolSet.size;
+        const avgUsage =
+          aggregatedSystems.reduce((sum, s) => sum + s.perc_used, 0) /
+          aggregatedSystems.length;
+        const uniquePools = new Set(
+          aggregatedSystems.flatMap(s => s.pools)
+        ).size;
         const telemetryActive = aggregatedSystems.filter(s => s.sending_telemetry).length;
 
         let healthyCount = 0;
         let warningCount = 0;
         let criticalCount = 0;
-        aggregatedSystems.forEach(system => {
-          const score = calculateSystemHealthScore(system);
+        aggregatedSystems.forEach(sys => {
+          const score = calculateSystemHealthScore(sys);
           if (score >= 80) healthyCount++;
           else if (score >= 50) warningCount++;
           else criticalCount++;
         });
-        const totalSystems = aggregatedSystems.length;
-        const companyHealthScore = 75; // Esempio semplificato
 
-        const computedCompanyStats: CompanyStats = {
+        const computedStats: CompanyStats = {
           name: decodeURIComponent(companyName!),
-          totalSystems,
+          totalSystems: aggregatedSystems.length,
           healthyCount,
           warningCount,
           criticalCount,
@@ -208,7 +201,7 @@ export default function CompanyDetail() {
           totalCapacity,
           usedCapacity,
           uniquePools,
-          healthScore: companyHealthScore,
+          healthScore: 0, // calcolo a parte se serve
           healthBreakdown: {
             capacityImpact: 0,
             snapshotImpact: 0,
@@ -218,25 +211,24 @@ export default function CompanyDetail() {
           }
         };
 
-        // Verifica delle autorizzazioni in base al ruolo utente
+        // 6) Permessi utente
         if (user) {
-          if (user.role === 'admin_employee') {
-            if (
-              user.visibleCompanies &&
-              !user.visibleCompanies.includes('all') &&
-              !user.visibleCompanies.includes(computedCompanyStats.name)
-            ) {
-              setError('Access denied');
-              return;
-            }
-          } else if (user.role !== 'admin' && computedCompanyStats.name !== user.company) {
+          if (
+            user.role === 'admin_employee' &&
+            user.visibleCompanies &&
+            !user.visibleCompanies.includes('all') &&
+            !user.visibleCompanies.includes(computedStats.name)
+          ) {
+            setError('Access denied');
+            return;
+          } else if (user.role !== 'admin' && computedStats.name !== user.company) {
             setError('Access denied');
             return;
           }
         }
-        setCompanyStats(computedCompanyStats);
-      } catch (error) {
-        console.error('Error loading systems:', error);
+        setCompanyStats(computedStats);
+      } catch (e) {
+        console.error('Error loading systems:', e);
         setError('Failed to load systems data');
       } finally {
         setIsLoading(false);
