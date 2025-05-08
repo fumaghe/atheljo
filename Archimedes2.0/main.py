@@ -44,7 +44,7 @@ class Main:
         # --------------------------------------------------------------
         base_unit_map = (
             df_systems[
-                df_systems["pool"].notna() & ~df_systems["pool"].str.contains("/")
+                df_systems["pool"].notna() & ~df_systems["pool"].str.contains("/", na=False)
             ][["hostid", "pool", "unit_id"]]
             .set_index(["hostid", "pool"])["unit_id"]
             .to_dict()
@@ -114,14 +114,14 @@ class Main:
         logging.info("Deletion of capacity_history documents older than cutoff completed")
 
         # --------------------------------------------------------------
-        # 6 | capaciity_trends_dataset  (solo pool con “/”)
+        # 6 | capacity_trends_dataset  (solo pool con “/”)
         # --------------------------------------------------------------
         for _, r in df_capacity_dataset.iterrows():
             pool_sanitized = str(r["pool"]).replace("/", "-")
             formatted_date = r["date"].replace(" ", "_").replace(":", "-")
             doc_id = f"{r['hostid']}_{pool_sanitized}_{formatted_date}"
-            db.collection("capaciity_trends_dataset").document(doc_id).set(r.to_dict())
-        logging.info("Firestore capaciity_trends_dataset update completed")
+            db.collection("capacity_trends_dataset").document(doc_id).set(r.to_dict())
+        logging.info("Firestore capacity_trends_dataset update completed")
 
         # --------------------------------------------------------------
         # 7 | system_data

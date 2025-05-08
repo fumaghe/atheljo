@@ -1,3 +1,4 @@
+# results.py  – versione FIX 2025-05-08
 import pandas as pd
 import logging
 from datetime import timedelta
@@ -6,21 +7,24 @@ import utils
 MAX_TIMEFRAME_HOURS = 24
 
 
-# ------------------------------------------------------------------------------
+# --------------------------------------------------------------------------
 # CAPACITY TRENDS – SOLO POOL SENZA “/”
-# ------------------------------------------------------------------------------
+# --------------------------------------------------------------------------
 def capacity_trends_table(raw_data_telemetry: pd.DataFrame) -> pd.DataFrame:
     """
     Ritorna il dataframe per la tabella *capacity_trends*,
     ESCLUDENDO le pool che contengono “/”.
     """
     raw_df = raw_data_telemetry.copy()
-    df = raw_df[~raw_df["pool"].str.contains("/")]
+    # ❶  Gestione sicura dei NaN
+    df = raw_df[~raw_df["pool"].str.contains("/", na=False)].copy()
 
+    # --- trasformazioni date ------------------------------------------------
     df["date"] = pd.to_datetime(df["editdate"])
     df["day"] = df["date"].dt.strftime("%Y-%m-%d")
     df["date"] = df["date"].dt.strftime("%Y-%m-%d %H:%M:%S")
 
+    # --- campi di lavoro ----------------------------------------------------
     df["unit_id"] = df.apply(lambda r: f"{r['hostid']}-{r['pool']}", axis=1)
 
     df["total"] = df["avail"] + df["used"]
@@ -55,22 +59,22 @@ def capacity_trends_table(raw_data_telemetry: pd.DataFrame) -> pd.DataFrame:
         subset=["day", "hostid", "perc_snap", "pool", "snap"], inplace=False
     )
 
-    logging.info(
-        f"Filtering telemetry values: skipped {df.shape[0] - df_filtered.shape[0]} rows"
-    )
+    skipped = df.shape[0] - df_filtered.shape[0]
+    logging.info(f"Filtering telemetry values: skipped {skipped} rows")
     return df_filtered
 
 
-# ------------------------------------------------------------------------------
+# --------------------------------------------------------------------------
 # CAPACITY TRENDS DATASET – SOLO POOL CON “/”
-# ------------------------------------------------------------------------------
+# --------------------------------------------------------------------------
 def capacity_trends_dataset_table(raw_data_telemetry: pd.DataFrame) -> pd.DataFrame:
     """
-    Ritorna il dataframe per la tabella *capaciity_trends_dataset*,
+    Ritorna il dataframe per la tabella *capacity_trends_dataset*,
     CONTENENTE esclusivamente le pool che includono “/”.
     """
     raw_df = raw_data_telemetry.copy()
-    df = raw_df[raw_df["pool"].str.contains("/")]
+    # ❷  Gestione sicura dei NaN
+    df = raw_df[raw_df["pool"].str.contains("/", na=False)].copy()
 
     df["date"] = pd.to_datetime(df["editdate"])
     df["day"] = df["date"].dt.strftime("%Y-%m-%d")
@@ -113,9 +117,9 @@ def capacity_trends_dataset_table(raw_data_telemetry: pd.DataFrame) -> pd.DataFr
     return df_filtered
 
 
-# ------------------------------------------------------------------------------
+# --------------------------------------------------------------------------
 # SYSTEMS DATA
-# ------------------------------------------------------------------------------
+# --------------------------------------------------------------------------
 def systems_data_table(
     raw_data_companies: pd.DataFrame, raw_data_telemetry: pd.DataFrame
 ) -> pd.DataFrame:
@@ -146,7 +150,9 @@ def systems_data_table(
     avg_times["avg_time"] = avg_times["avg_time"].round(2)
 
     # ---------------- merge companies + telemetry --------------
-    df = pd.merge(df_companies, df_telemetry, on="hostid", how="left", suffixes=("", "_t"))
+    df = pd.merge(
+        df_companies, df_telemetry, on="hostid", how="left", suffixes=("", "_t")
+    )
     df["editdate_dt"] = pd.to_datetime(df["editdate"], errors="coerce")
 
     df_latest = (
@@ -169,7 +175,10 @@ def systems_data_table(
 
     # ---------------- mapping unit_id per pool con “/” ----------
     base_map = (
-        df_latest[df_latest["pool"].notna() & ~df_latest["pool"].str.contains("/")]
+        df_latest[
+            df_latest["pool"].notna()
+            & ~df_latest["pool"].str.contains("/", na=False)   # ❸ FIX
+        ]
         .set_index(["hostid", "pool"])["unit_id"]
         .to_dict()
     )
