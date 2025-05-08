@@ -38,6 +38,7 @@
     "firebase": "^11.4.0",
     "firebase-admin": "^13.2.0",
     "framer-motion": "^12.4.10",
+    "html-to-text": "^9.0.5",
     "html2canvas": "^1.4.1",
     "icecream": "^0.9.3",
     "jsdom": "^26.0.0",
