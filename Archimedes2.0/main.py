@@ -1,3 +1,4 @@
+# main.py – versione corretta 2025-05-08
 import argparse
 import logging
 import os
@@ -26,7 +27,6 @@ class Main:
         # 1 | Config & DB
         # --------------------------------------------------------------
         self.config = dotenv_values(self.env_file_path)
-
         raw_data_companies, raw_data_telemetry = connect_merlindb(
             self.config, self.last_id_path
         )
@@ -71,7 +71,7 @@ class Main:
             )
 
         # --------------------------------------------------------------
-        # 4 | Firestore
+        # 4 | Firestore Init
         # --------------------------------------------------------------
         cred_path = os.environ.get("FIRESTORE_CREDENTIALS_PATH")
         if not (cred_path and os.path.exists(cred_path)):
@@ -124,31 +124,25 @@ class Main:
         logging.info("Firestore capacity_trends_dataset update completed")
 
         # --------------------------------------------------------------
-        # 7 | system_data
+        # 7 | system_data – salva TUTTE le colonne
         # --------------------------------------------------------------
         for _, r in df_systems.iterrows():
             if pd.isna(r["pool"]):
                 doc_id = f"{r['hostid']}"
             else:
                 doc_id = f"{r['hostid']}_{str(r['pool']).replace('/', '-')}"
-            update_fields = {
-                "unit_id": r["unit_id"],
-                "used_snap": r["used_snap"],
-                "used": r["used"],
-                "sending_telemetry": r["sending_telemetry"],
-                "perc_used": r["perc_used"],
-                "perc_snap": r["perc_snap"],
-                "last_date": r["last_date"],
-                "avail": r["avail"],
-            }
-            db.collection("system_data").document(doc_id).set(update_fields, merge=True)
+            # qui salviamo ogni colonna del dataframe direttamente
+            db.collection("system_data").document(doc_id).set(
+                r.to_dict(),
+                merge=True
+            )
         logging.info("Firestore system_data update completed")
 
-        # ---- elimina documenti orfani -------------------------------
-        for doc in db.collection("system_data").stream():
-            if "_" not in doc.id:
-                doc.reference.delete()
-        logging.info("Deletion of old system_data documents completed")
+        # ---- (opzionale) elimina documenti host-only se non servono ----
+        # for doc in db.collection("system_data").stream():
+        #     if "_" not in doc.id:
+        #         doc.reference.delete()
+        # logging.info("Deletion of old system_data documents completed")
 
         # --------------------------------------------------------------
         # 8 | ArchimedesDB

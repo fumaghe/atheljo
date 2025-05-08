@@ -16,20 +16,19 @@ def capacity_trends_table(raw_data_telemetry: pd.DataFrame) -> pd.DataFrame:
     ESCLUDENDO le pool che contengono “/”.
     """
     raw_df = raw_data_telemetry.copy()
-    # ❶  Gestione sicura dei NaN
     df = raw_df[~raw_df["pool"].str.contains("/", na=False)].copy()
 
-    # --- trasformazioni date ------------------------------------------------
+    # date
     df["date"] = pd.to_datetime(df["editdate"])
     df["day"] = df["date"].dt.strftime("%Y-%m-%d")
     df["date"] = df["date"].dt.strftime("%Y-%m-%d %H:%M:%S")
 
-    # --- campi di lavoro ----------------------------------------------------
+    # unit_id
     df["unit_id"] = df.apply(lambda r: f"{r['hostid']}-{r['pool']}", axis=1)
 
+    # capacità
     df["total"] = df["avail"] + df["used"]
     df["total_space"] = df["total"].apply(utils.byte_to_giga)
-
     df["used_over_total"] = df["used"] / df["total"]
     df["snap_over_total"] = (df["snap"] / df["total"]).mask(
         df["snap"] / df["total"] < 0.01, 0.0
@@ -58,7 +57,6 @@ def capacity_trends_table(raw_data_telemetry: pd.DataFrame) -> pd.DataFrame:
     df_filtered = df.drop_duplicates(
         subset=["day", "hostid", "perc_snap", "pool", "snap"], inplace=False
     )
-
     skipped = df.shape[0] - df_filtered.shape[0]
     logging.info(f"Filtering telemetry values: skipped {skipped} rows")
     return df_filtered
@@ -73,19 +71,17 @@ def capacity_trends_dataset_table(raw_data_telemetry: pd.DataFrame) -> pd.DataFr
     CONTENENTE esclusivamente le pool che includono “/”.
     """
     raw_df = raw_data_telemetry.copy()
-    # ❷  Gestione sicura dei NaN
     df = raw_df[raw_df["pool"].str.contains("/", na=False)].copy()
 
     df["date"] = pd.to_datetime(df["editdate"])
     df["day"] = df["date"].dt.strftime("%Y-%m-%d")
     df["date"] = df["date"].dt.strftime("%Y-%m-%d %H:%M:%S")
 
-    # unit_id provvisorio (sarà mappato in main.py)
+    # unit_id provvisorio
     df["unit_id"] = df.apply(lambda r: f"{r['hostid']}-{r['pool']}", axis=1)
 
     df["total"] = df["avail"] + df["used"]
     df["total_space"] = df["total"].apply(utils.byte_to_giga)
-
     df["used_over_total"] = df["used"] / df["total"]
     df["snap_over_total"] = (df["snap"] / df["total"]).mask(
         df["snap"] / df["total"] < 0.01, 0.0
@@ -125,34 +121,29 @@ def systems_data_table(
 ) -> pd.DataFrame:
     """
     Crea la tabella *systems_data*.
-    Ora INCLUDE anche le pool con “/” e mappa il loro unit_id
-    su quello della pool “base” (prima del primo “/”).
+    INCLUDE anche le pool con “/” e mappa il loro unit_id
+    su quello della pool “base”.
     """
     df_companies = raw_data_companies.copy()
-    df_telemetry = raw_data_telemetry.copy()
-    df_telemetry["editdate_dt"] = pd.to_datetime(
-        df_telemetry["editdate"], errors="coerce"
-    )
+    df_tel = raw_data_telemetry.copy()
+    df_tel["editdate_dt"] = pd.to_datetime(df_tel["editdate"], errors="coerce")
 
-    # ---------------- avg_time fra trasmissioni -----------------
-    df_telemetry = df_telemetry.sort_values("editdate_dt")
-
-    def avg_time_diff(group):
-        diffs = group["editdate_dt"].diff().dropna()
-        return diffs.mean().total_seconds() / 60.0 if not diffs.empty else 0.0
+    # avg_time fra trasmissioni
+    df_tel = df_tel.sort_values("editdate_dt")
+    def avg_time_diff(g):
+        d = g["editdate_dt"].diff().dropna()
+        return d.mean().total_seconds() / 60.0 if not d.empty else 0.0
 
     avg_times = (
-        df_telemetry.groupby(["hostid", "pool"])
+        df_tel.groupby(["hostid", "pool"])
         .apply(avg_time_diff)
         .to_frame("avg_time")
         .reset_index()
     )
     avg_times["avg_time"] = avg_times["avg_time"].round(2)
 
-    # ---------------- merge companies + telemetry --------------
-    df = pd.merge(
-        df_companies, df_telemetry, on="hostid", how="left", suffixes=("", "_t")
-    )
+    # merge companies + telemetry
+    df = pd.merge(df_companies, df_tel, on="hostid", how="left", suffixes=("", "_t"))
     df["editdate_dt"] = pd.to_datetime(df["editdate"], errors="coerce")
 
     df_latest = (
@@ -161,37 +152,29 @@ def systems_data_table(
         .last()
         .reset_index()
     )
+    for c in ["avail", "used", "snap", "ratio"]:
+        df_latest[c] = df_latest[c].fillna(0)
 
-    for col in ["avail", "used", "snap", "ratio"]:
-        df_latest[col] = df_latest[col].fillna(0)
-
-    # ---------------- unit_id di default ------------------------
+    # unit_id di default
     df_latest["unit_id"] = df_latest.apply(
-        lambda r: f"{r['hostid']}-{r['pool']}"
-        if pd.notnull(r["pool"])
-        else str(r["hostid"]),
+        lambda r: f"{r['hostid']}-{r['pool']}" if pd.notnull(r["pool"]) else str(r["hostid"]),
         axis=1,
     )
 
-    # ---------------- mapping unit_id per pool con “/” ----------
+    # mappa pool con “/”
     base_map = (
-        df_latest[
-            df_latest["pool"].notna()
-            & ~df_latest["pool"].str.contains("/", na=False)   # ❸ FIX
-        ]
+        df_latest[ df_latest["pool"].notna() & ~df_latest["pool"].str.contains("/", na=False) ]
         .set_index(["hostid", "pool"])["unit_id"]
         .to_dict()
     )
+    def map_u(r):
+        if pd.isna(r["pool"]) or "/" not in str(r["pool"]):
+            return r["unit_id"]
+        base = str(r["pool"]).split("/")[0]
+        return base_map.get((r["hostid"], base), r["unit_id"])
+    df_latest["unit_id"] = df_latest.apply(map_u, axis=1)
 
-    def map_unit_id(row):
-        if pd.isna(row["pool"]) or "/" not in str(row["pool"]):
-            return row["unit_id"]
-        base_pool = str(row["pool"]).split("/")[0]
-        return base_map.get((row["hostid"], base_pool), row["unit_id"])
-
-    df_latest["unit_id"] = df_latest.apply(map_unit_id, axis=1)
-
-    # ---------------- campi calcolati ---------------------------
+    # calcoli di capacità
     df_latest["total_space"] = df_latest["avail"] + df_latest["used"]
     df_latest["used_over_total"] = df_latest.apply(
         lambda r: r["used"] / r["total_space"] if r["total_space"] > 0 else 0, axis=1
@@ -206,21 +189,18 @@ def systems_data_table(
     df_latest["used"] = df_latest["used"].apply(utils.byte_to_giga)
     df_latest["used_snap"] = df_latest["snap"].apply(utils.byte_to_giga)
 
-    # ---------------- sending_telemetry -------------------------
+    # sending_telemetry
     df_latest["last_date"] = pd.to_datetime(df_latest["last_date"], errors="coerce")
-    is_sending = (pd.Timestamp.now() - df_latest["last_date"]) <= timedelta(
-        hours=MAX_TIMEFRAME_HOURS
-    )
-    df_latest["sending_telemetry"] = is_sending.fillna(False).map(
-        {True: "True", False: "False"}
-    )
+    is_sending = (pd.Timestamp.now() - df_latest["last_date"]) <= timedelta(hours=MAX_TIMEFRAME_HOURS)
+    df_latest["sending_telemetry"] = is_sending.fillna(False).map({True: "True", False: "False"})
 
-    # ---------------- merge avg_time ----------------------------
+    # merge avg_time
     df_latest = pd.merge(df_latest, avg_times, on=["hostid", "pool"], how="left")
     df_latest["avg_speed"] = df_latest["avg_time"]
 
-    # ---------------- altri campi -------------------------------
-    df_latest["MUP"] = pd.NA
+    # **qui** uso None invece di pd.NA per non creare pandas.NAType
+    df_latest["MUP"] = None
+
     df_latest["first_date"] = (
         pd.to_datetime(df_latest["first_date"], errors="coerce")
         .dt.strftime("%Y-%m-%d %H:%M:%S")
