@@ -95,222 +95,203 @@ export default function Companies() {
   const { canAccess: healthCanAccess, shouldBlur: healthShouldBlur } =
     useSubscriptionPermissions('Companies', 'System Health Score');
 
-  useEffect(() => {
-    const loadSystems = async () => {
-      try {
-        setIsLoading(true);
-        setError(null);
-
-        const now = Date.now();
-        let companyStatsList: CompanyStats[] = [];
-
-        /** Check the cache first */
-        if (
-          companiesCacheTimestamp &&
-          now - companiesCacheTimestamp < COMPANIES_CACHE_DURATION &&
-          cachedCompaniesData
-        ) {
-          companyStatsList = cachedCompaniesData;
-        } else {
-          // Load from Firestore
-          const systemDataRef = collection(firestore, 'system_data');
-          const qAll = query(systemDataRef);
-
-          const snapshot = await getDocs(qAll);
-          const rawData = snapshot.docs.map((doc: QueryDocumentSnapshot) =>
-            doc.data()
-          ) as SystemData[];
-
-          const byCompany: Record<string, SystemData[]> = {};
-          // Normalize numeric/boolean fields
-          for (const item of rawData) {
-            item.used = Number(item.used);
-            item.avail = Number(item.avail);
-            item.used_snap = Number(item.used_snap);
-            item.perc_used = Number(item.perc_used);
-            item.perc_snap = Number(item.perc_snap);
-            item.MUP = Number(item.MUP);
-            item.avg_speed = Number(item.avg_speed);
-            item.avg_time = Number(item.avg_time);
-            item.sending_telemetry =
-              String(item.sending_telemetry).toLowerCase() === 'true';
-
-            if (!byCompany[item.company]) {
-              byCompany[item.company] = [];
-            }
-            byCompany[item.company].push(item);
-          }
-
-          const nowDate = new Date();
-          const cutoff = new Date(nowDate);
-          cutoff.setMonth(nowDate.getMonth() - 1); // 1 month ago
-
-          const newCompanyStatsList: CompanyStats[] = [];
-
-          // Group each company's data by unit_id -> pool
-          for (const [companyName, systemsOfCompany] of Object.entries(
-            byCompany
-          )) {
-            const unitGroups: Record<
-              string,
-              Record<string, SystemData>
-            > = {};
-
-            for (const sys of systemsOfCompany) {
-              if (!unitGroups[sys.unit_id]) {
-                unitGroups[sys.unit_id] = {};
+    useEffect(() => {
+      const loadSystems = async () => {
+        try {
+          setIsLoading(true);
+          setError(null);
+    
+          const now = Date.now();
+          let companyStatsList: CompanyStats[] = [];
+    
+          /** Check the cache first */
+          if (
+            companiesCacheTimestamp &&
+            now - companiesCacheTimestamp < COMPANIES_CACHE_DURATION &&
+            cachedCompaniesData
+          ) {
+            companyStatsList = cachedCompaniesData;
+          } else {
+            // 1) Load from Firestore
+            const systemDataRef = collection(firestore, 'system_data');
+            const qAll = query(systemDataRef);
+            const snapshot = await getDocs(qAll);
+    
+            // 2) Map & filter out any pool that contains '/'
+            //    (inclusi eventuali undefined/null)
+            const rawData = snapshot.docs
+              .map((doc: QueryDocumentSnapshot) => doc.data() as SystemData)
+              .filter(sys => {
+                // se pool non è stringa, lo teniamo (è considerato base)
+                if (typeof sys.pool !== 'string') return true;
+                // altrimenti teniamo solo se NON contiene '/'
+                return !sys.pool.includes('/');
+              });
+    
+            // 3) Group by company
+            const byCompany: Record<string, SystemData[]> = {};
+            for (const item of rawData) {
+              // normalize fields
+              item.used = Number(item.used);
+              item.avail = Number(item.avail);
+              item.used_snap = Number(item.used_snap);
+              item.perc_used = Number(item.perc_used);
+              item.perc_snap = Number(item.perc_snap);
+              item.MUP = Number(item.MUP);
+              item.avg_speed = Number(item.avg_speed);
+              item.avg_time = Number(item.avg_time);
+              item.sending_telemetry =
+                String(item.sending_telemetry).toLowerCase() === 'true';
+    
+              if (!byCompany[item.company]) {
+                byCompany[item.company] = [];
               }
-              const existing = unitGroups[sys.unit_id][sys.pool];
-              if (!existing) {
-                unitGroups[sys.unit_id][sys.pool] = sys;
-              } else {
-                const currentLastDate = new Date(sys.last_date);
-                const existingLastDate = new Date(existing.last_date);
-                if (currentLastDate > existingLastDate) {
+              byCompany[item.company].push(item);
+            }
+    
+            // 4) Compute cutoff (1 month ago)
+            const nowDate = new Date();
+            const cutoff = new Date(nowDate);
+            cutoff.setMonth(nowDate.getMonth() - 1);
+    
+            const newCompanyStatsList: CompanyStats[] = [];
+    
+            // 5) Aggregate per unit_id → pool
+            for (const [companyName, systemsOfCompany] of Object.entries(byCompany)) {
+              const unitGroups: Record<string, Record<string, SystemData>> = {};
+    
+              for (const sys of systemsOfCompany) {
+                if (!unitGroups[sys.unit_id]) {
+                  unitGroups[sys.unit_id] = {};
+                }
+                const existing = unitGroups[sys.unit_id][sys.pool];
+                if (!existing) {
                   unitGroups[sys.unit_id][sys.pool] = sys;
+                } else {
+                  const curr = new Date(sys.last_date);
+                  const prev = new Date(existing.last_date);
+                  if (curr > prev) {
+                    unitGroups[sys.unit_id][sys.pool] = sys;
+                  }
                 }
               }
-            }
-
-            const aggregatedSystems: AggregatedSystem[] = [];
-            for (const [unitId, poolMap] of Object.entries(unitGroups)) {
-              const poolRecords = Object.values(poolMap);
-              let validPoolRecords = poolRecords.filter(
-                (rec) => new Date(rec.last_date) >= cutoff
-              );
-              if (validPoolRecords.length === 0) {
-                validPoolRecords = poolRecords; // fallback
-              }
-              if (validPoolRecords.length === 1) {
-                const record = validPoolRecords[0];
-                aggregatedSystems.push({
-                  ...record,
-                  pools: [record.pool],
-                  count: 1,
-                });
-              } else {
-                // pick the doc with the LATEST last_date
-                const representative = validPoolRecords.reduce((prev, curr) =>
-                  new Date(prev.last_date) > new Date(curr.last_date)
-                    ? prev
-                    : curr
+    
+              const aggregatedSystems: AggregatedSystem[] = [];
+              for (const [unitId, poolMap] of Object.entries(unitGroups)) {
+                const poolRecords = Object.values(poolMap);
+                let valid = poolRecords.filter(
+                  rec => new Date(rec.last_date) >= cutoff
                 );
+                if (valid.length === 0) valid = poolRecords;
+    
+                const representative =
+                  valid.length === 1
+                    ? valid[0]
+                    : valid.reduce((p, c) =>
+                        new Date(p.last_date) > new Date(c.last_date) ? p : c
+                      );
+    
                 aggregatedSystems.push({
                   ...representative,
                   pools: [representative.pool],
-                  count: validPoolRecords.length,
+                  count: valid.length,
                 });
               }
+    
+              // 6) Compute stats
+              const totalCapacity = aggregatedSystems.reduce(
+                (sum, s) => sum + s.used + s.avail,
+                0
+              );
+              const usedCapacity = aggregatedSystems.reduce(
+                (sum, s) => sum + s.used,
+                0
+              );
+              const avgUsage =
+                aggregatedSystems.reduce((sum, s) => sum + s.perc_used, 0) /
+                (aggregatedSystems.length || 1);
+    
+              const healthScores = aggregatedSystems.map(s =>
+                calculateSystemHealthScore(s)
+              );
+              const avgHealthScore =
+                healthScores.reduce((a, x) => a + x, 0) /
+                (healthScores.length || 1);
+              const healthyCount = healthScores.filter(x => x >= 80).length;
+              const warningCount = healthScores.filter(x => x >= 50 && x < 80).length;
+              const criticalCount = healthScores.filter(x => x < 50).length;
+              const telemetryActive = aggregatedSystems.filter(s => s.sending_telemetry).length;
+    
+              const poolSet = new Set<string>();
+              aggregatedSystems.forEach(sys =>
+                sys.pools.forEach(p => poolSet.add(p))
+              );
+              const poolCount = poolSet.size;
+    
+              const versions = aggregatedSystems.reduce(
+                (acc, sys) => {
+                  acc[sys.type] = (acc[sys.type] || 0) + 1;
+                  return acc;
+                },
+                {} as { [key: string]: number }
+              );
+    
+              newCompanyStatsList.push({
+                name: companyName,
+                systemCount: aggregatedSystems.length,
+                poolCount,
+                totalCapacity,
+                usedCapacity,
+                avgUsage,
+                avgHealthScore,
+                healthyCount,
+                warningCount,
+                criticalCount,
+                telemetryActive,
+                systems: aggregatedSystems,
+                versions,
+              });
             }
-
-            // Summary stats
-            const totalCapacity = aggregatedSystems.reduce(
-              (sum, s) => sum + s.used + s.avail,
-              0
-            );
-            const usedCapacity = aggregatedSystems.reduce(
-              (sum, s) => sum + s.used,
-              0
-            );
-            const avgUsage =
-              aggregatedSystems.reduce((sum, s) => sum + s.perc_used, 0) /
-              (aggregatedSystems.length || 1);
-
-            const healthScores = aggregatedSystems.map((s) =>
-              calculateSystemHealthScore(s)
-            );
-            const avgHealthScore =
-              healthScores.reduce((acc, score) => acc + score, 0) /
-              (healthScores.length || 1);
-            const healthyCount = healthScores.filter((score) => score >= 80)
-              .length;
-            const warningCount = healthScores.filter(
-              (score) => score >= 50 && score < 80
-            ).length;
-            const criticalCount = healthScores.filter((score) => score < 50)
-              .length;
-
-            const telemetryActive = aggregatedSystems.filter(
-              (s) => s.sending_telemetry
-            ).length;
-
-            // Distinct pools
-            const poolSet = new Set<string>();
-            aggregatedSystems.forEach((sys) => {
-              sys.pools.forEach((p) => poolSet.add(p));
-            });
-            const poolCount = poolSet.size;
-
-            // Collect versions from aggregated systems
-            const versions = aggregatedSystems.reduce((acc, sys) => {
-              const version = sys.type;
-              acc[version] = (acc[version] || 0) + 1;
-              return acc;
-            }, {} as { [key: string]: number });
-
-            const stats: CompanyStats = {
-              name: companyName,
-              systemCount: aggregatedSystems.length,
-              poolCount,
-              totalCapacity,
-              usedCapacity,
-              avgUsage,
-              avgHealthScore,
-              healthyCount,
-              warningCount,
-              criticalCount,
-              telemetryActive,
-              systems: aggregatedSystems,
-              versions,
-            };
-            newCompanyStatsList.push(stats);
+    
+            companiesCacheTimestamp = now;
+            cachedCompaniesData = newCompanyStatsList;
+            companyStatsList = newCompanyStatsList;
           }
-
-          companiesCacheTimestamp = now;
-          cachedCompaniesData = newCompanyStatsList;
-          companyStatsList = newCompanyStatsList;
-        }
-
-        // Filter out companies user isn't allowed to see
-        if (user) {
-          if (user.role === 'admin_employee') {
-            if (
-              user.visibleCompanies &&
-              !user.visibleCompanies.includes('all')
-            ) {
-              companyStatsList = companyStatsList.filter((stat) =>
-                user.visibleCompanies!.includes(stat.name)
+    
+          // 7) User‐based filtering
+          if (user) {
+            if (user.role === 'admin_employee') {
+              if (user.visibleCompanies && !user.visibleCompanies.includes('all')) {
+                companyStatsList = companyStatsList.filter(stat =>
+                  user.visibleCompanies!.includes(stat.name)
+                );
+              }
+            } else if (user.role !== 'admin') {
+              companyStatsList = companyStatsList.filter(
+                stat => stat.name === user.company
               );
             }
-          } else if (user.role !== 'admin') {
-            // Normal employee can see only their own company
-            companyStatsList = companyStatsList.filter(
-              (stat) => stat.name === user.company
-            );
           }
-        }
-
-        // We now have final companyStatsList for the user
-        setCompanies(companyStatsList);
-
-        // Build a dynamic list of all version types
-        const versionSet = new Set<string>();
-        for (const c of companyStatsList) {
-          for (const v of Object.keys(c.versions)) {
-            versionSet.add(v);
+    
+          // 8) Finalize
+          setCompanies(companyStatsList);
+    
+          const versionSet = new Set<string>();
+          for (const c of companyStatsList) {
+            Object.keys(c.versions).forEach(v => versionSet.add(v));
           }
+          setAllVersions(Array.from(versionSet).sort());
+        } catch (error) {
+          console.error('Error loading systems:', error);
+          setError('Failed to load systems data');
+        } finally {
+          setIsLoading(false);
         }
-        setAllVersions(Array.from(versionSet).sort());
-      } catch (error) {
-        console.error('Error loading systems:', error);
-        setError('Failed to load systems data');
-      } finally {
-        setIsLoading(false);
-      }
-    };
-
-    loadSystems();
-  }, [user]);
+      };
+    
+      loadSystems();
+    }, [user]);
+    
 
   /**
    * Filter the final array of companies
