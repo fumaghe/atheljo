@@ -247,6 +247,8 @@ function SystemDetail() {
   const [allRecords, setAllRecords] = useState<SystemData[]>([]);
   const [poolList, setPoolList] = useState<string[]>([]);
   const [selectedPool, setSelectedPool] = useState<string | null>(null);
+  const [segmentOptions, setSegmentOptions] = useState<string[][]>([]);
+  const [selectedSegments, setSelectedSegments] = useState<string[]>([]);
   const [selectedHostid, setSelectedHostid] = useState<string | null>(null);
   const [systemData, setSystemData] = useState<SystemData | null>(null);
   const [stitchedTelemetry, setStitchedTelemetry] = useState<TelemetryData[]>([]);
@@ -414,6 +416,36 @@ function SystemDetail() {
       }
     })();
   }, [unitId, user]);
+
+  useEffect(() => {
+    if (!poolList.length) return;
+    const lvl0 = Array.from(new Set(poolList.map(p => p.split('/')[0])));
+    setSegmentOptions([lvl0]);
+    setSelectedSegments([]);
+  }, [poolList]);
+
+  useEffect(() => {
+    const lvl = selectedSegments.length;
+    if (lvl === 0) return;
+
+    const filtered = poolList.filter(p => {
+      const parts = p.split('/');
+      return selectedSegments.every((seg, i) => parts[i] === seg);
+    });
+
+    // next options
+    const nextOpts = Array.from(new Set(
+      filtered.map(p => p.split('/')[lvl]).filter(x => !!x)
+    ));
+
+    setSegmentOptions(prev => {
+      const copy = prev.slice(0, lvl);
+      if (nextOpts.length) copy.push(nextOpts);
+      return copy;
+    });
+
+  }, [selectedSegments, poolList]);
+
 
   // =============== 2) Al cambio pool, scelgo l'hostid più recente per quella pool ===============
   useEffect(() => {
@@ -590,6 +622,24 @@ function SystemDetail() {
     return daysDiff > 0 ? Number((percentageDiff / daysDiff).toFixed(2)) : 0;
   }
 
+  function handleNextLevel(value: string) {
+    // 1) aggiorno i segmenti fino al nuovo valore
+    const newSegs = [...selectedSegments, value];
+    setSelectedSegments(newSegs);
+    // 2) setto subito selectedPool sul prefix (es. "sp0/39a1/x3axs42i")
+    setSelectedPool(newSegs.join('/'));
+    setSelectedHostid(null);
+  }
+
+  function handleBreadcrumbClick(idx: number) {
+    // 1) taglio i segmenti fino all'indice cliccato
+    const newSegs = selectedSegments.slice(0, idx + 1);
+    setSelectedSegments(newSegs);
+    // 2) ricostruisco il pool prefix e lo setto
+    setSelectedPool(newSegs.join('/'));
+    setSelectedHostid(null);
+  }
+  
   function getTimeRangeData<T extends { date: string }>(data: T[], range: string): T[] {
     if (range === 'all') return data;
     const now = new Date();
@@ -854,8 +904,19 @@ function SystemDetail() {
     return <div className="text-red-500">{error}</div>;
   }
 
+  if (!selectedPool) {
+    return (
+      <div className="flex justify-between items-center">
+        {/* qui ricopio solo l'HEADER con il breadcrumb + dropdown */}
+        {/* non mostro hostid, charts ecc finché non ho pool */}
+      </div>
+    );
+  }
+
+  // A questo punto so che selectedPool è settato e posso rendere
+  // l'intero componente come prima, incluso il blocco "No system data"
   if (!systemData) {
-    return <div className="text-yellow-500">No system data available.</div>;
+    return <div className="text-yellow-500">No data for pool {selectedPool}</div>;
   }
 
   return (
@@ -883,25 +944,54 @@ function SystemDetail() {
             </p>
           </div>
         </div>
-        {/* Selettore pool */}
-        <div>
-          {poolList.length > 1 && (
-            <select
-              className="bg-[#06272b] text-[#eeeeee] rounded px-3 py-1 border border-[#22c1d4]/20"
-              value={selectedPool ?? ''}
-              onChange={(e) => {
-                setSelectedPool(e.target.value);
-                setSelectedHostid(null);
-              }}
-            >
-              {poolList.map((pool) => (
-                <option key={pool} value={pool}>
-                  {pool}
-                </option>
-              ))}
-            </select>
-          )}
+        {/* Selettore pool semplificato: solo primo + penultimo segmento */}
+        <div className="flex items-center space-x-2">
+          {/* breadcrumb ridotto */}
+          {(() => {
+            const len = selectedSegments.length;
+            // costruisco array di crumb: primo e penultimo (se esistono)
+            const crumbs: { label: string; idx: number }[] = [];
+            if (len >= 1) crumbs.push({ label: selectedSegments[0], idx: 0 });
+            if (len >= 2) crumbs.push({ label: selectedSegments[len - 2], idx: len - 2 });
+
+            return (
+              <div className="flex items-center space-x-1">
+                {crumbs.map((c, i) => (
+                  <React.Fragment key={i}>
+                    <button
+                      onClick={() => handleBreadcrumbClick(c.idx)}
+                      className="text-[#22c1d4] hover:underline"
+                    >
+                      {c.label}
+                    </button>
+                    {i < crumbs.length - 1 && (
+                      <span className="text-[#eeeeee]/60">›</span>
+                    )}
+                  </React.Fragment>
+                ))}
+              </div>
+            );
+          })()}
+
+          {/* dropdown prossimo livello */}
+          <select
+            className="bg-[#06272b] text-[#eeeeee] rounded px-3 py-1 border border-[#22c1d4]/20"
+            value=""
+            onChange={e => handleNextLevel(e.target.value)}
+          >
+            <option value="" disabled>
+              {selectedSegments.length > 0
+                ? selectedSegments[selectedSegments.length - 1]
+                : 'Seleziona pool'}
+            </option>
+            {segmentOptions[selectedSegments.length]?.map(opt => (
+              <option key={opt} value={opt}>
+                {opt}
+              </option>
+            ))}
+          </select>
         </div>
+
       </div>
 
       {/* BLOCCO - ELENCO HOSTID */}

@@ -221,7 +221,11 @@ export default function CompanyDetail() {
           ) {
             setError('Access denied');
             return;
-          } else if (user.role !== 'admin' && computedStats.name !== user.company) {
+          } else if (
+            user.role !== 'admin' &&
+            user.role !== 'admin_employee' &&
+            computedStats.name !== user.company
+          ) {
             setError('Access denied');
             return;
           }
