@@ -103,6 +103,7 @@ interface HealthMetric {
 interface UnitCache {
   allSystemRecords: SystemData[]; // Tutti i record system_data
   allTelemetry: TelemetryData[];   // Tutti i dati telemetrici (capacity_trends)
+  allDatasetTelemetry: TelemetryData[]; // dati da capacity_trends_dataset
   allForecast: ForecastPoint[];    // (Non più usato per il forecast matematico)
   timestamp: number;
 }
@@ -286,6 +287,8 @@ function SystemDetail() {
           setIsLoading(false);
           return;
         }
+
+        // 1. FETCH system_data
         const systemRef = collection(firestore, 'system_data');
         const systemQuery = query(systemRef, where('unit_id', '==', unitId));
         const snapshot = await getDocs(systemQuery);
@@ -298,7 +301,7 @@ function SystemDetail() {
         snapshot.forEach((doc) => {
           const d = doc.data();
           const firstDate = d.first_date ? d.first_date.replace(' ', 'T') : '';
-          const lastDate = d.last_date ? d.last_date.replace(' ', 'T') : '';
+          const lastDate  = d.last_date  ? d.last_date.replace(' ', 'T') : '';
           loadedRecords.push({
             name: d.name || '',
             hostid: d.hostid || '',
@@ -315,8 +318,8 @@ function SystemDetail() {
             last_date: lastDate,
             MUP: d.MUP == null ? 55 : Number(d.MUP),
             avg_speed: Number(d.avg_speed),
-            avg_time: Number(d.avg_time),
-            company: d.company || ''
+            avg_time:  Number(d.avg_time),
+            company:   d.company || ''
           });
         });
         if (!loadedRecords.length) {
@@ -324,77 +327,82 @@ function SystemDetail() {
           setIsLoading(false);
           return;
         }
-        if (user && loadedRecords.length > 0) {
-          const rec0 = loadedRecords[0];
-          if (user.role === 'admin_employee') {
-            if (user.visibleCompanies && !user.visibleCompanies.includes('all') && !user.visibleCompanies.includes(rec0.company)) {
-              setError('Access denied: company mismatch');
-              setIsLoading(false);
-              return;
-            }
-          } else if (user.role !== 'admin' && rec0.company !== user.company) {
-            setError('Access denied: not your company');
-            setIsLoading(false);
-            return;
-          }
-        }
-        let latestRecord = loadedRecords[0];
-        let maxTime = 0;
-        for (const r of loadedRecords) {
-          const t = new Date(r.last_date).getTime();
-          if (t > maxTime) {
-            maxTime = t;
-            latestRecord = r;
-          }
-        }
+        // (eventuali controlli permessi utente…)
+
+        // 2. PREP: hostid unici
         const uniqueHostids = Array.from(new Set(loadedRecords.map(r => r.hostid)));
-        const telemQ = query(
-          collection(firestore, 'capacity_trends'),
-          where('hostid', 'in', uniqueHostids)
-        );
+
+        // 3. FETCH capacity_trends (top‐level)
+        const telemQ    = query(collection(firestore, 'capacity_trends'),      where('hostid', 'in', uniqueHostids));
         const telemSnap = await getDocs(telemQ);
         let allTelemetryData: TelemetryData[] = [];
         telemSnap.forEach((doc) => {
           const td = doc.data();
           allTelemetryData.push({
-            date: td.date ? td.date.replace(' ', 'T') : '',
-            unit_id: td.unit_id || '',
-            pool: td.pool || '',
-            used: Number(td.used),
+            date:        td.date ? td.date.replace(' ', 'T') : '',
+            unit_id:     td.unit_id || '',
+            pool:        td.pool || '',
+            used:        Number(td.used),
             total_space: Number(td.total_space),
-            perc_used: Number(td.perc_used),
-            snap: Number(td.snap),
-            perc_snap: Number(td.perc_snap),
-            hostid: td.hostid || ''
+            perc_used:   Number(td.perc_used),
+            snap:        Number(td.snap),
+            perc_snap:   Number(td.perc_snap),
+            hostid:      td.hostid || ''
           });
         });
         allTelemetryData = allTelemetryData
           .filter((t) => t.perc_used >= 0 && t.perc_used <= 100)
           .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
-        const foreQ = query(
-          collection(firestore, 'usage_forecast'),
-          where('hostid', 'in', uniqueHostids)
-        );
+
+        // 4. FETCH capacity_trends_dataset (sub‐level)
+        const dsQ    = query(collection(firestore, 'capacity_trends_dataset'), where('hostid', 'in', uniqueHostids));
+        const dsSnap = await getDocs(dsQ);
+        let allDatasetTelemetry: TelemetryData[] = [];
+        dsSnap.forEach((doc) => {
+          const td = doc.data();
+          allDatasetTelemetry.push({
+            date:        td.date ? td.date.replace(' ', 'T') : '',
+            unit_id:     td.unit_id || '',
+            pool:        td.pool || '',
+            used:        Number(td.used),
+            total_space: Number(td.total_space),
+            perc_used:   Number(td.perc_used),
+            snap:        Number(td.snap),
+            perc_snap:   Number(td.perc_snap),
+            hostid:      td.hostid || ''
+          });
+        });
+        allDatasetTelemetry = allDatasetTelemetry
+          .filter((t) => t.perc_used >= 0 && t.perc_used <= 100)
+          .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+
+        // 5. FETCH usage_forecast
+        const foreQ    = query(collection(firestore, 'usage_forecast'), where('hostid', 'in', uniqueHostids));
         const foreSnap = await getDocs(foreQ);
         let allForecastData: ForecastPoint[] = [];
         foreSnap.forEach((doc) => {
           const fd = doc.data();
           allForecastData.push({
-            date: fd.date ? fd.date.replace(' ', 'T') : '',
-            unit_id: fd.unit_id || '',
-            pool: fd.pool || '',
-            forecasted_usage: Number(fd.forecasted_usage),
+            date:                  fd.date ? fd.date.replace(' ', 'T') : '',
+            unit_id:               fd.unit_id || '',
+            pool:                  fd.pool || '',
+            forecasted_usage:      Number(fd.forecasted_usage),
             forecasted_percentage: Number(fd.forecasted_percentage),
-            hostid: fd.hostid || ''
+            hostid:                fd.hostid || ''
           });
         });
         allForecastData.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+
+        // 6. POPOLA CACHE
         unitCache[unitId] = {
-          allSystemRecords: loadedRecords,
-          allTelemetry: allTelemetryData,
-          allForecast: allForecastData,
-          timestamp: now
+          allSystemRecords:   loadedRecords,
+          allTelemetry:       allTelemetryData,
+          allDatasetTelemetry,   // <— aggiunto
+          allForecast:        allForecastData,
+          timestamp:          now
         };
+
+        // 7. SET STATE iniziale
         setAllRecords(loadedRecords);
         const allPools = Array.from(new Set(loadedRecords.map((r) => r.pool)));
         setPoolList(allPools);
@@ -416,6 +424,7 @@ function SystemDetail() {
       }
     })();
   }, [unitId, user]);
+
 
   useEffect(() => {
     if (!poolList.length) return;
@@ -464,142 +473,174 @@ function SystemDetail() {
     }
   }, [selectedPool, allRecords, selectedHostid]);
 
-  // =============== 3) Stitching di usage history e calcolo dei forecast ===============
+  // =============== 3) Drill-through lazy-load telemetry + calcolo forecast & health ===============
   useEffect(() => {
-    if (!selectedPool || !selectedHostid || !allRecords.length || !unitId) {
+    if (!selectedPool || !selectedHostid || !allRecords.length) {
       setSystemData(null);
-      setStitchedTelemetry([]); 
+      setStitchedTelemetry([]);
       setForecastData(null);
       setHealthScore(null);
       return;
     }
-    const cached = unitCache[unitId];
-    if (!cached) return;
-    const relevantRecords = allRecords.filter(
-      (r) => r.pool === selectedPool && r.hostid === selectedHostid
-    );
-    if (!relevantRecords.length) {
-      setSystemData(null);
-      setStitchedTelemetry([]);
-      return;
-    }
-    relevantRecords.sort((a, b) => new Date(b.last_date).getTime() - new Date(a.last_date).getTime());
-    const currentSystem = relevantRecords[0];
-    setSystemData(currentSystem);
-    let finalTelemetry: TelemetryData[] = [];
-    for (const rec of relevantRecords) {
-      const from = new Date(rec.first_date).getTime();
-      const to = new Date(rec.last_date).getTime();
-      const sub = cached.allTelemetry.filter((t) => {
-        if (t.pool !== rec.pool) return false;
-        if (t.hostid !== rec.hostid) return false;
-        const tDate = new Date(t.date).getTime();
-        return tDate >= from && tDate <= to;
-      });
-      finalTelemetry.push(...sub);
-    }
-    finalTelemetry.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
-    setStitchedTelemetry(finalTelemetry);
-    const forecastTelemetry = removeDataBeforeSignificantDrop(finalTelemetry, 30);
-    const fc: ForecastData = {
-      unitId: currentSystem.unit_id,
-      pool: currentSystem.pool,
-      time_to_70: calculateForecastDays(forecastTelemetry, 70),
-      time_to_80: calculateForecastDays(forecastTelemetry, 80),
-      time_to_90: calculateForecastDays(forecastTelemetry, 90),
-      current_usage: currentSystem.perc_used,
-      growth_rate: calculateDailyGrowth(forecastTelemetry)
-    };
-    setForecastData(fc);
-    const finalScore = calculateSystemHealthScore(currentSystem);
-    const capacityScore =
-      currentSystem.perc_used <= 55
-        ? 100
-        : Math.max(0, 100 - (currentSystem.perc_used - 55) * (100 / 45));
-    const performanceScore = Math.max(0, 100 - 10 * Math.abs(currentSystem.avg_time - 5));
-    const telemetryScore = currentSystem.sending_telemetry ? 100 : 0;
-    const snapshotsScore =
-      currentSystem.used_snap > 0
-        ? Math.max(0, Math.min(100, 100 - currentSystem.perc_snap))
-        : 0;
-    const mupScore =
-      currentSystem.MUP <= 55
-        ? 100
-        : Math.max(0, 100 - (currentSystem.MUP - 55) * (100 / 45));
-    const utilizationScore = (capacityScore + snapshotsScore) / 2;
-    const metrics: HealthMetric[] = [
-      {
-        name: 'Capacity',
-        value: Number(capacityScore.toFixed(1)),
-        rawValue: Number((100 - currentSystem.perc_used).toFixed(1)),
-        unit: '%',
-        status: capacityScore < 50 ? 'critical' : capacityScore < 70 ? 'warning' : 'good',
-        message: `${(currentSystem.used / 1024).toFixed(2)} TB used of ${(((currentSystem.used + currentSystem.avail) / 1024).toFixed(2))} TB total`,
-        impact: 'N/A',
-        weight: 40,
-        icon: Database
-      },
-      {
-        name: 'Performance',
-        value: Number(performanceScore.toFixed(1)),
-        rawValue: Number(performanceScore.toFixed(1)),
-        unit: '',
-        status: performanceScore < 50 ? 'critical' : performanceScore < 60 ? 'warning' : 'good',
-        message: `Avg time: ${currentSystem.avg_time.toFixed(1)} min`,
-        impact: 'N/A',
-        weight: 20,
-        icon: Zap
-      },
-      {
-        name: 'Telemetry',
-        value: telemetryScore,
-        rawValue: currentSystem.sending_telemetry ? 'Active' : 'Inactive',
-        unit: '',
-        status: telemetryScore === 100 ? 'good' : 'critical',
-        message: currentSystem.sending_telemetry ? 'System is sending telemetry' : 'No telemetry',
-        impact: 'N/A',
-        weight: 15,
-        icon: Signal
-      },
-      {
-        name: 'Snapshots',
-        value: Number(snapshotsScore.toFixed(1)),
-        rawValue: Number(currentSystem.used_snap.toFixed(2)),
-        unit: '',
-        status: snapshotsScore < 50 ? 'critical' : snapshotsScore < 70 ? 'warning' : 'good',
-        message:
-          currentSystem.used_snap > 0
-            ? `${currentSystem.used_snap.toFixed(2)} GB used for snapshots`
-            : 'No snapshots found',
-        impact: 'N/A',
-        weight: 10,
-        icon: Camera
-      },
-      {
-        name: 'MUP',
-        value: Number(mupScore.toFixed(1)),
-        rawValue: currentSystem.MUP,
-        unit: 'TB',
-        status: mupScore < 50 ? 'critical' : mupScore < 60 ? 'warning' : 'good',
-        message: 'Resource usage patterns',
-        impact: 'N/A',
-        weight: 15,
-        icon: BarChart
-      },
-      {
-        name: 'Utilization',
-        value: Number(utilizationScore.toFixed(1)),
-        rawValue: utilizationScore.toFixed(1),
-        unit: '',
-        status: utilizationScore < 50 ? 'critical' : utilizationScore < 70 ? 'warning' : 'good',
-        message: 'Avg of Capacity & Snapshots Score',
-        impact: 'N/A',
-        weight: 0,
-        icon: Gauge
+
+    setIsLoading(true);
+    setError(null);
+
+    (async () => {
+      try {
+        // 1) Scegli la collezione corretta in base a sub-level vs top-level
+        const collName = selectedPool.includes('/')
+          ? 'capacity_trends_dataset'
+          : 'capacity_trends';
+
+        // 2) Fai la query su Firestore per hostid + pool
+        const telemQ = query(
+          collection(firestore, collName),
+          where('hostid', '==', selectedHostid),
+          where('pool',   '==', selectedPool)
+        );
+        const telemSnap = await getDocs(telemQ);
+
+        // 3) Mappa i documenti in TelemetryData[]
+        let telemetry: TelemetryData[] = [];
+        telemSnap.forEach(doc => {
+          const td = doc.data();
+          telemetry.push({
+            date:        td.date ? td.date.replace(' ', 'T') : '',
+            unit_id:     td.unit_id || '',
+            pool:        td.pool || '',
+            used:        Number(td.used),
+            total_space: Number(td.total_space),
+            perc_used:   Number(td.perc_used),
+            snap:        Number(td.snap),
+            perc_snap:   Number(td.perc_snap),
+            hostid:      td.hostid || ''
+          });
+        });
+
+        // 4) Ordina per data e set nello stato
+        telemetry.sort((a, b) =>
+          new Date(a.date).getTime() - new Date(b.date).getTime()
+        );
+        setStitchedTelemetry(telemetry);
+
+        // 5) Recupera il SystemData più recente per pool+hostid
+        const recs = allRecords
+          .filter(r => r.pool === selectedPool && r.hostid === selectedHostid)
+          .sort((a, b) =>
+            new Date(b.last_date).getTime() - new Date(a.last_date).getTime()
+          );
+        const currentSystem = recs[0];
+        setSystemData(currentSystem);
+
+        // 6) Calcolo forecast basato sui dati puliti
+        const cleanTelemetry = removeDataBeforeSignificantDrop(telemetry, 30);
+        const fc: ForecastData = {
+          unitId:        currentSystem.unit_id,
+          pool:          currentSystem.pool,
+          time_to_70:    calculateForecastDays(cleanTelemetry, 70),
+          time_to_80:    calculateForecastDays(cleanTelemetry, 80),
+          time_to_90:    calculateForecastDays(cleanTelemetry, 90),
+          current_usage: currentSystem.perc_used,
+          growth_rate:   calculateDailyGrowth(cleanTelemetry)
+        };
+        setForecastData(fc);
+
+        // 7) Calcolo health score e metriche
+        const finalScore       = calculateSystemHealthScore(currentSystem);
+        const capacityScore    = currentSystem.perc_used <= 55
+          ? 100
+          : Math.max(0, 100 - (currentSystem.perc_used - 55) * (100 / 45));
+        const performanceScore = Math.max(0, 100 - 10 * Math.abs(currentSystem.avg_time - 5));
+        const telemetryScore   = currentSystem.sending_telemetry ? 100 : 0;
+        const snapshotsScore   = currentSystem.used_snap > 0
+          ? Math.max(0, Math.min(100, 100 - currentSystem.perc_snap))
+          : 0;
+        const mupScore         = currentSystem.MUP <= 55
+          ? 100
+          : Math.max(0, 100 - (currentSystem.MUP - 55) * (100 / 45));
+        const utilizationScore = (capacityScore + snapshotsScore) / 2;
+
+        const metrics: HealthMetric[] = [
+          {
+            name: 'Capacity',
+            value: Number(capacityScore.toFixed(1)),
+            rawValue: Number((100 - currentSystem.perc_used).toFixed(1)),
+            unit: '%',
+            status: capacityScore < 50 ? 'critical' : capacityScore < 70 ? 'warning' : 'good',
+            message: `${(currentSystem.used / 1024).toFixed(2)} TB used of ${(((currentSystem.used + currentSystem.avail) / 1024).toFixed(2))} TB total`,
+            impact: 'N/A',
+            weight: 40,
+            icon: Database
+          },
+          {
+            name: 'Performance',
+            value: Number(performanceScore.toFixed(1)),
+            rawValue: Number(performanceScore.toFixed(1)),
+            unit: '',
+            status: performanceScore < 50 ? 'critical' : performanceScore < 60 ? 'warning' : 'good',
+            message: `Avg time: ${currentSystem.avg_time.toFixed(1)} min`,
+            impact: 'N/A',
+            weight: 20,
+            icon: Zap
+          },
+          {
+            name: 'Telemetry',
+            value: telemetryScore,
+            rawValue: currentSystem.sending_telemetry ? 'Active' : 'Inactive',
+            unit: '',
+            status: telemetryScore === 100 ? 'good' : 'critical',
+            message: currentSystem.sending_telemetry ? 'System is sending telemetry' : 'No telemetry',
+            impact: 'N/A',
+            weight: 15,
+            icon: Signal
+          },
+          {
+            name: 'Snapshots',
+            value: Number(snapshotsScore.toFixed(1)),
+            rawValue: Number(currentSystem.used_snap.toFixed(2)),
+            unit: '',
+            status: snapshotsScore < 50 ? 'critical' : snapshotsScore < 70 ? 'warning' : 'good',
+            message: currentSystem.used_snap > 0
+              ? `${currentSystem.used_snap.toFixed(2)} GB used for snapshots`
+              : 'No snapshots found',
+            impact: 'N/A',
+            weight: 10,
+            icon: Camera
+          },
+          {
+            name: 'MUP',
+            value: Number(mupScore.toFixed(1)),
+            rawValue: currentSystem.MUP,
+            unit: 'TB',
+            status: mupScore < 50 ? 'critical' : mupScore < 60 ? 'warning' : 'good',
+            message: 'Resource usage patterns',
+            impact: 'N/A',
+            weight: 15,
+            icon: BarChart
+          },
+          {
+            name: 'Utilization',
+            value: Number(utilizationScore.toFixed(1)),
+            rawValue: utilizationScore.toFixed(1),
+            unit: '',
+            status: utilizationScore < 50 ? 'critical' : utilizationScore < 70 ? 'warning' : 'good',
+            message: 'Avg of Capacity & Snapshots Score',
+            impact: 'N/A',
+            weight: 0,
+            icon: Gauge
+          }
+        ];
+        setHealthScore({ score: finalScore, metrics });
+
+      } catch (err) {
+        console.error(err);
+        setError('Failed to load telemetry for selected pool');
+      } finally {
+        setIsLoading(false);
       }
-    ];
-    setHealthScore({ score: finalScore, metrics });
-  }, [selectedPool, selectedHostid, allRecords, unitId]);
+    })();
+  }, [selectedPool, selectedHostid, allRecords]);
 
   // =============== Funzioni di Supporto ===============
   function calculateDaysToThreshold(forecastPoints: ForecastPoint[], threshold: number) {
