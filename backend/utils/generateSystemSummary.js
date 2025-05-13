@@ -10,7 +10,10 @@ import firestore from '../firebase.js';
 export async function generateSystemSummary(windowDays = 21) {
   // 1) Fetch & filter data
   const snapshot = await firestore.collection('system_data').get();
-  const systems  = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+  const systems  = snapshot.docs
+    .map(d => ({ id: d.id, ...d.data() }))
+    // escludi le pool con '/' nel nome
+    .filter(s => !s.pool?.includes('/'));
   const now      = new Date();
   const cutoff   = new Date(now.getTime() - windowDays * 86_400_000);
   const recent   = systems.filter(s =>
