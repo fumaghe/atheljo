@@ -1,7 +1,12 @@
 /* ------------------------------------------------------------------
    src/pages/AlertsHistory.tsx
    ------------------------------------------------------------------ */
-import React, { useEffect, useMemo, useState } from 'react';
+import React, {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import {
   QueryDocumentSnapshot,
   DocumentData,
@@ -27,7 +32,7 @@ import {
   Filter,
   Bell,
 } from 'lucide-react';
-import { format } from 'date-fns';
+import { format, isToday, isYesterday, differenceInHours } from 'date-fns';
 import clsx from 'clsx';
 
 import firestore from '../firebaseClient';
@@ -63,6 +68,7 @@ interface SystemData {
   pool: string;
   company: string;
   sending_telemetry: boolean;
+  last_date?: string; // ← campo presente in system_data
 }
 
 interface CapacityDoc {
@@ -73,6 +79,7 @@ interface CapacityDoc {
 }
 
 interface ForecastDoc {
+  [key: string]: string | number;
   hostid: string;
   date: string;
   time_to_80: string | number;
@@ -87,6 +94,7 @@ interface AlertPage {
 }
 
 /* ----------------------- DATA HELPERS --------------------------- */
+// sistema → Map così evitiamo query ripetitive
 const fetchSystems = async () => {
   const snap = await getDocs(collection(firestore, 'system_data'));
   const map = new Map<string, SystemData>();
@@ -98,11 +106,27 @@ const fetchSystems = async () => {
         typeof s.sending_telemetry === 'boolean'
           ? s.sending_telemetry
           : String(s.sending_telemetry).toLowerCase() === 'true',
+      last_date: s.last_date,
     });
   });
   return map;
 };
 
+const pushUnique = (
+  list: Alert[],
+  keySet: Set<string>,
+  key: string,
+  value: Alert
+) => {
+  if (!keySet.has(key)) {
+    keySet.add(key);
+    list.push(value);
+  }
+};
+
+/* ---------------------------------------------------------------
+   generateAlerts: crea la lista unificata di alert
+---------------------------------------------------------------- */
 const generateAlerts = (
   systems: Map<string, SystemData>,
   capacity: CapacityDoc[],
@@ -110,12 +134,15 @@ const generateAlerts = (
   now: Date
 ): Alert[] => {
   const alerts: Alert[] = [];
+  const seen = new Set<string>();
+
+  /* ---- capacity grouping per hostid ---- */
   const capacityBySystem: Record<string, CapacityDoc[]> = {};
   capacity.forEach(r => {
     (capacityBySystem[r.hostid] ??= []).push(r);
   });
 
-  /* FORECAST --------------------------------------------------- */
+  /* -------- FORECAST ------------------------------------------------ */
   forecast.forEach(rec => {
     const sys = systems.get(rec.hostid);
     if (!sys) return;
@@ -126,16 +153,12 @@ const generateAlerts = (
     const latestCap = caps[0];
     const percUsed = latestCap ? Number(latestCap.perc_used) : 0;
 
-    const timeTo = (k: '80' | '90' | '100') =>
-      Number((rec as any)[`time_to_${k}`]);
+    const timeTo = (k: '80' | '90' | '100'): number =>
+      Number(rec[`time_to_${k}`]);
     const growthRate = Number(rec.growth_rate);
 
-    const push = (
-      msg: string,
-      lvl: AlertLevel,
-      t: AlertType = 'forecast'
-    ) =>
-      alerts.push({
+    const push = (msg: string, lvl: AlertLevel, t: AlertType = 'forecast') =>
+      pushUnique(alerts, seen, `${rec.hostid}-${t}-${msg}`, {
         id: `${rec.hostid}-${t}-${msg}`,
         unit_id: sys.unit_id,
         pool: sys.pool,
@@ -146,13 +169,14 @@ const generateAlerts = (
         importance: lvl,
       });
 
-    if (percUsed >= 80)
+    if (percUsed >= 80) {
       push(
         `Already above 80 % (${percUsed.toFixed(1)} %).`,
         percUsed >= 90 ? 'red' : 'blue'
       );
-    else if (timeTo('80') <= 30)
+    } else if (timeTo('80') <= 30) {
       push(`Will reach 80 % in ${timeTo('80')} d.`, 'white');
+    }
 
     if (timeTo('90') <= 30 && percUsed < 90)
       push(`Will reach 90 % in ${timeTo('90')} d.`, 'blue');
@@ -167,7 +191,7 @@ const generateAlerts = (
       );
   });
 
-  /* SUDDEN CHANGES (Used **e** Snap) --------------------------- */
+  /* -------- SUDDEN CHANGES ----------------------------------------- */
   Object.entries(capacityBySystem).forEach(([id, recs]) => {
     const sys = systems.get(id);
     if (!sys || recs.length < 2) return;
@@ -186,15 +210,16 @@ const generateAlerts = (
     ] as const).forEach(([k, label]) => {
       const d = diff(k);
       if (Math.abs(d) < 5) return;
-      alerts.push({
+
+      pushUnique(alerts, seen, `${id}-${k}-${last.date}`, {
         id: `${id}-${k}-${last.date}`,
         unit_id: sys.unit_id,
         pool: sys.pool,
         company: sys.company,
         message:
           d > 0
-            ? `Sudden ↑ in ${label}: +${d.toFixed(1)} %`
-            : `Sudden ↓ in ${label}: −${Math.abs(d).toFixed(1)} %`,
+            ? `Sudden ↑ in ${label}: +${d.toFixed(1)} %`
+            : `Sudden ↓ in ${label}: −${Math.abs(d).toFixed(1)} %`,
         date: last.date,
         type: d > 0 ? 'suddenIncrease' : 'suddenDecrease',
         importance: Math.abs(d) >= 10 ? 'red' : 'blue',
@@ -202,7 +227,7 @@ const generateAlerts = (
     });
   });
 
-  /* INACTIVITY -------------------------------------------------- */
+  /* -------- INACTIVITY --------------------------------------------- */
   Object.entries(capacityBySystem).forEach(([id, recs]) => {
     const sys = systems.get(id);
     if (!sys) return;
@@ -211,37 +236,52 @@ const generateAlerts = (
     );
     const diffH = (+now - +new Date(latest.date)) / 3_600_000;
     if (diffH >= 24)
-      alerts.push({
+      pushUnique(alerts, seen, `${id}-inact`, {
         id: `${id}-inact`,
         unit_id: sys.unit_id,
         pool: sys.pool,
         company: sys.company,
-        message: `No data for ${Math.floor(diffH)} h.`,
+        message: `No data for ${Math.floor(diffH)} h.`,
         date: latest.date,
         type: 'inactivity',
         importance: diffH >= 48 ? 'red' : 'blue',
       });
   });
 
-  /* TELEMETRY OFF ---------------------------------------------- */
-  systems.forEach(s =>
-    !s.sending_telemetry &&
-      alerts.push({
+  /* -------- TELEMETRY OFF: mostra solo fino a 3 giorni ------------- */
+  systems.forEach(s => {
+    if (s.sending_telemetry) return;
+
+    const capRecs = capacityBySystem[s.hostid] ?? [];
+    const lastCapDate = capRecs.length
+      ? capRecs.reduce((a, b) =>
+          +new Date(a.date) > +new Date(b.date) ? a : b
+        ).date
+      : undefined;
+
+    // usa last_date da system_data se presente
+    const lastSeenStr =
+      lastCapDate ??
+      (s.last_date ? s.last_date.replace(' ', 'T') : undefined);
+
+    const lastSeen = lastSeenStr ? new Date(lastSeenStr) : now;
+    const diffDays = (now.getTime() - lastSeen.getTime()) / 86_400_000;
+
+    if (diffDays <= 3) {
+      pushUnique(alerts, seen, `${s.hostid}-telemetry`, {
         id: `${s.hostid}-telemetry`,
         unit_id: s.unit_id,
         pool: s.pool,
         company: s.company,
         message: 'Telemetry inactive.',
-        date: now.toISOString(),
+        date: lastSeen.toISOString(),
         type: 'telemetryInactive',
         importance: 'red',
-      })
-  );
+      });
+    }
+  });
 
-  /* DEDUP + SORT ------------------------------------------------ */
-  return [...new Map(alerts.map(a => [a.id, a])).values()].sort(
-    (a, b) => +new Date(b.date) - +new Date(a.date)
-  );
+  return alerts.sort((a, b) => +new Date(b.date) - +new Date(a.date));
 };
 
 /* ----------------------- UI CONSTANTS --------------------------- */
@@ -261,55 +301,73 @@ const borderPalette: Record<AlertLevel, string> = {
 };
 
 /* ========================== PAGE =============================== */
-const PAGE_SIZE = 30; // 30 per fetch
+const PAGE_SIZE = 30;
 const DISPLAY_BATCH = 30;
+const DAYS_BACK = 7;
 
 export const AlertsHistory: React.FC = () => {
   const { user, isAuthenticated, isInitializingSession } = useAuth();
 
-  /* -------- map sistemi -------- */
+  /* -------- systems map -------- */
   const { data: systemsMap, isLoading: loadingSys } = useQuery({
     queryKey: ['systemsMap'],
     queryFn: fetchSystems,
-    staleTime: 1_200_000,
+    staleTime: 20 * 60 * 1000,
   });
 
-  /* -------- filtri local -------- */
-  const [typeFilter, setType] = useState<'all' | AlertType>('all');
-  const [companyFilter, setCompany] = useState('all');
-  const [severityFilter, setSeverity] = useState<'all' | AlertLevel>('all');
+  /* -------- filtri -------- */
+  const [filters, setFilters] = useState<{
+    type: AlertType | 'all';
+    company: string;
+    severity: AlertLevel | 'all';
+    recent24h: boolean;
+    onlyRed: boolean;
+    showDatasets: boolean;
+  }>({
+    type: 'all',
+    company: 'all',
+    severity: 'all',
+    recent24h: false,
+    onlyRed: false,
+    showDatasets: false,
+  });
+
+  const toggleQuick = (
+    k: 'recent24h' | 'onlyRed' | 'showDatasets'
+  ) => setFilters(p => ({ ...p, [k]: !p[k] }));
+
   const [filtersOpen, setFiltersOpen] = useState(false);
 
-  /* -------- infinite query ----- */
+  /* -------- infinite query -------- */
   const {
     data,
     fetchNextPage,
     hasNextPage,
     isFetchingNextPage,
     isLoading: loadingAlerts,
-  } = useInfiniteQuery<
-    AlertPage,
-    Error,
-    AlertPage,
-    [
+  } = useInfiniteQuery<AlertPage, Error>({
+    queryKey: [
       'alertsHistory',
-      typeof typeFilter,
-      typeof companyFilter,
-      typeof severityFilter
-    ]
-  >({
-    queryKey: ['alertsHistory', typeFilter, companyFilter, severityFilter],
+      filters.type,
+      filters.company,
+      filters.severity,
+      filters.recent24h,
+      filters.onlyRed,
+      filters.showDatasets,
+    ],
     enabled: !!systemsMap,
-    initialPageParam: undefined,
+    initialPageParam: undefined as QueryDocumentSnapshot<DocumentData> | undefined,
     getNextPageParam: last => last.lastDoc,
     queryFn: async ({ pageParam }) => {
       const now = new Date();
-      const capSnap = await getDocs(
+      const since = new Date(+now - DAYS_BACK * 24 * 60 * 60 * 1000);
+
+      const capacitySnap = await getDocs(
         query(
           collection(firestore, 'capacity_trends'),
           orderBy('date', 'desc'),
-          ...(pageParam ? [startAfter(pageParam)] : []),
-          limit(PAGE_SIZE)
+          limit(PAGE_SIZE),
+          ...(pageParam ? [startAfter(pageParam)] : [])
         )
       );
       const forecastSnap = await getDocs(
@@ -319,36 +377,50 @@ export const AlertsHistory: React.FC = () => {
           limit(PAGE_SIZE)
         )
       );
+
+      const capacityDocs = capacitySnap.docs
+        .map(d => d.data() as CapacityDoc)
+        .filter(d => new Date(d.date) >= since);
+      const forecastDocs = forecastSnap.docs
+        .map(d => d.data() as ForecastDoc)
+        .filter(d => new Date(d.date) >= since);
+
       return {
-        alerts: generateAlerts(
-          systemsMap!,
-          capSnap.docs.map(d => d.data() as CapacityDoc),
-          forecastSnap.docs.map(d => d.data() as ForecastDoc),
-          now
-        ),
-        lastDoc: capSnap.docs.at(-1) as QueryDocumentSnapshot<DocumentData>,
+        alerts: generateAlerts(systemsMap!, capacityDocs, forecastDocs, now),
+        lastDoc:
+          capacitySnap.docs.length === PAGE_SIZE
+            ? (capacitySnap.docs.at(-1) as QueryDocumentSnapshot<DocumentData>)
+            : undefined,
       };
     },
-    staleTime: 300_000,
+    staleTime: 5 * 60 * 1000,
   });
 
-  /* -------- merge + dedup globale -------- */
+  /* -------- merge + filtra -------- */
   const alerts = useMemo(() => {
-    const raw = (data as InfiniteData<AlertPage> | undefined)?.pages.flatMap(
-      p => p.alerts
-    ) ?? [];
+    const pages = (data as InfiniteData<AlertPage> | undefined)?.pages ?? [];
+    const raw = pages.flatMap(p => p.alerts);
 
-    // ulteriore dedup: una sola card per (unit,pool,company,type)
     const uniq = new Map<string, Alert>();
     raw.forEach(a => {
       const k = `${a.unit_id}-${a.pool}-${a.company}-${a.type}`;
-      if (!uniq.has(k)) uniq.set(k, a); // lista è già sorted → primo = più recente
+      if (!uniq.has(k)) uniq.set(k, a);
     });
 
     return [...uniq.values()].filter(a => {
-      if (typeFilter !== 'all' && a.type !== typeFilter) return false;
-      if (companyFilter !== 'all' && a.company !== companyFilter) return false;
-      if (severityFilter !== 'all' && a.importance !== severityFilter)
+      /* filtro pool con / (datasets) */
+      if (!filters.showDatasets && a.pool.includes('/')) return false;
+
+      if (filters.onlyRed && a.importance !== 'red') return false;
+      if (
+        filters.recent24h &&
+        differenceInHours(new Date(), new Date(a.date)) > 24
+      )
+        return false;
+      if (filters.type !== 'all' && a.type !== filters.type) return false;
+      if (filters.company !== 'all' && a.company !== filters.company)
+        return false;
+      if (filters.severity !== 'all' && a.importance !== filters.severity)
         return false;
 
       if (user?.role === 'admin_employee') {
@@ -363,9 +435,9 @@ export const AlertsHistory: React.FC = () => {
       }
       return true;
     });
-  }, [data, typeFilter, companyFilter, severityFilter, user]);
+  }, [data, filters, user]);
 
-  /* ----- autofetch 30 visibili ----- */
+  /* -------- auto-fetch next page -------- */
   useEffect(() => {
     if (
       alerts.length < DISPLAY_BATCH &&
@@ -376,16 +448,46 @@ export const AlertsHistory: React.FC = () => {
     }
   }, [alerts.length, hasNextPage, isFetchingNextPage, fetchNextPage]);
 
-  const showLoadMore =
-    hasNextPage && alerts.length >= DISPLAY_BATCH && !isFetchingNextPage;
+  /* -------- infinite-scroll sentinel -------- */
+  const sentinelRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!sentinelRef.current || !hasNextPage || isFetchingNextPage) return;
+    const obs = new IntersectionObserver(entries => {
+      if (entries[0].isIntersecting && hasNextPage && !isFetchingNextPage) {
+        fetchNextPage();
+      }
+    });
+    obs.observe(sentinelRef.current);
+    return () => obs.disconnect();
+  }, [fetchNextPage, hasNextPage, isFetchingNextPage]);
 
-  /* -------- guards ---------- */
+  /* -------- raggruppa per sezione giorno -------- */
+  const groupKey = (d: Date) => {
+    if (isToday(d)) return 'Oggi';
+    if (isYesterday(d)) return 'Ieri';
+    const diffDays = Math.floor(
+      (Date.now() - +d) / (24 * 60 * 60 * 1000)
+    );
+    if (diffDays <= 7) return 'Questa settimana';
+    return 'Più vecchi';
+  };
+
+  const sectioned = useMemo(() => {
+    const map = new Map<string, Alert[]>();
+    alerts.forEach(a => {
+      const key = groupKey(new Date(a.date));
+      (map.get(key) ?? map.set(key, []).get(key)!).push(a);
+    });
+    return Array.from(map.entries());
+  }, [alerts]);
+
+  /* -------- guards -------- */
   if (isInitializingSession || loadingSys)
     return <div className="p-8 text-center text-zinc-200">Loading…</div>;
   if (!isAuthenticated || !user) return <Navigate to="/login" replace />;
   if (user.subscription === 'None') return <NoPermission />;
 
-  /* -------- JSX ------------ */
+  /* ------------------------ RENDER ------------------------------ */
   return (
     <div className="p-6">
       <div className="flex items-center justify-between mb-4">
@@ -395,95 +497,149 @@ export const AlertsHistory: React.FC = () => {
         </h1>
         <button
           onClick={() => setFiltersOpen(!filtersOpen)}
-          className="flex items-center gap-1 text-cyan-300 hover:text-cyan-200"
+          className="flex items-center gap-1 text-cyan-300 hover:text-cyan-200 transition-colors"
         >
           <Filter className="w-5 h-5" />
           Filters
         </button>
       </div>
 
-      {filtersOpen && (
-        <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-6 bg-[#01323b] p-4 rounded-lg">
-          <Select
-            label="Type"
-            value={typeFilter}
-            onChange={v => setType(v as any)}
-            options={[
-              'all',
-              'forecast',
-              'suddenIncrease',
-              'suddenDecrease',
-              'inactivity',
-              'telemetryInactive',
-              'highGrowth',
-            ]}
-          />
-          <Select
-            label="Company"
-            value={companyFilter}
-            onChange={setCompany}
-            options={[
-              'all',
-              ...Array.from(new Set(alerts.map(a => a.company))),
-            ]}
-          />
-          <Select
-            label="Severity"
-            value={severityFilter}
-            onChange={v => setSeverity(v as any)}
-            options={['all', 'white', 'blue', 'red']}
-          />
-        </div>
-      )}
+      {/* FILTRI */}
+      <div
+        className={clsx(
+          'grid transition-all duration-300 overflow-hidden',
+          filtersOpen
+            ? 'grid-rows-[1fr] sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-6 bg-[#01323b] p-4 rounded-lg'
+            : 'grid-rows-[0fr] mb-0'
+        )}
+        style={{ gridAutoRows: filtersOpen ? 'auto' : '0' }}
+      >
+        {filtersOpen && (
+          <>
+            <Select
+              label="Type"
+              value={filters.type}
+              onChange={v =>
+                setFilters(p => ({ ...p, type: v as AlertType | 'all' }))
+              }
+              options={[
+                'all',
+                'forecast',
+                'suddenIncrease',
+                'suddenDecrease',
+                'inactivity',
+                'telemetryInactive',
+                'highGrowth',
+              ]}
+            />
+            <Select
+              label="Company"
+              value={filters.company}
+              onChange={v => setFilters(p => ({ ...p, company: v }))}
+              options={[
+                'all',
+                ...Array.from(new Set(alerts.map(a => a.company))),
+              ]}
+            />
+            <Select
+              label="Severity"
+              value={filters.severity}
+              onChange={v =>
+                setFilters(p => ({ ...p, severity: v as AlertLevel | 'all' }))
+              }
+              options={['all', 'white', 'blue', 'red']}
+            />
+            <div className="flex flex-wrap gap-2 col-span-full">
+              <button
+                onClick={() => toggleQuick('onlyRed')}
+                className={clsx(
+                  'px-3 py-2 rounded text-sm border',
+                  filters.onlyRed
+                    ? 'bg-[#f8485e]/20 border-[#f8485e] text-[#f8485e]'
+                    : 'bg-transparent border-slate-500 text-slate-300'
+                )}
+              >
+                Solo Rossi
+              </button>
+              <button
+                onClick={() => toggleQuick('recent24h')}
+                className={clsx(
+                  'px-3 py-2 rounded text-sm border',
+                  filters.recent24h
+                    ? 'bg-cyan-600/20 border-cyan-400 text-cyan-300'
+                    : 'bg-transparent border-slate-500 text-slate-300'
+                )}
+              >
+                Ultime 24h
+              </button>
+              <button
+                onClick={() => toggleQuick('showDatasets')}
+                className={clsx(
+                  'px-3 py-2 rounded text-sm border',
+                  filters.showDatasets
+                    ? 'bg-emerald-600/20 border-emerald-400 text-emerald-300'
+                    : 'bg-transparent border-slate-500 text-slate-300'
+                )}
+              >
+                Show Datasets
+              </button>
+            </div>
+          </>
+        )}
+      </div>
 
       {loadingAlerts ? (
-        <div className="text-center text-zinc-300">Loading alerts…</div>
+        <SkeletonGrid />
       ) : alerts.length === 0 ? (
         <div className="text-center text-zinc-400">No alerts.</div>
       ) : (
         <>
-          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-            {alerts.map(a => {
-              const Icon = iconMap[a.type];
-              return (
-                <div
-                  key={a.id}
-                  className={clsx(
-                    'relative rounded-lg border px-4 py-3 bg-[#01262e] text-slate-100',
-                    borderPalette[a.importance]
-                  )}
-                >
-                  <Icon className="absolute right-2 top-2 w-5 h-5 text-slate-400" />
-                  <h3 className="font-semibold">
-                    {a.unit_id} – {a.pool}
-                  </h3>
-                  <p className="text-xs text-cyan-300 mb-1">{a.company}</p>
-                  <p className="text-sm mb-3">{a.message}</p>
-                  <span className="text-xs text-slate-400">
-                    {format(new Date(a.date), 'MMM dd, yyyy')}
-                  </span>
-                </div>
-              );
-            })}
-          </div>
-
-          {showLoadMore && (
-            <div className="flex justify-center mt-6">
-              <button
-                onClick={() => fetchNextPage()}
-                className="px-5 py-2 rounded bg-cyan-600 hover:bg-cyan-500 text-[#01262e] font-semibold"
-              >
-                Load more
-              </button>
+          {sectioned.map(([section, list]) => (
+            <div key={section} className="mb-8">
+              <h2 className="text-xl font-bold text-cyan-400 mb-3">
+                {section}
+              </h2>
+              <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+                {list.map(a => {
+                  const Icon = iconMap[a.type];
+                  const d = new Date(a.date);
+                  return (
+                    <div
+                      key={a.id}
+                      className={clsx(
+                        'relative rounded-lg border px-4 py-3 bg-[#01262e] text-slate-100',
+                        borderPalette[a.importance]
+                      )}
+                    >
+                      <Icon className="absolute right-2 top-2 w-5 h-5 text-slate-400" />
+                      <h3 className="font-semibold">
+                        {a.unit_id} – {a.pool}
+                      </h3>
+                      <p className="text-xs text-cyan-300 mb-1">{a.company}</p>
+                      <p className="text-sm mb-3">{a.message}</p>
+                      <span className="text-xs text-slate-400">
+                        {format(d, 'MMM dd, yyyy')}
+                        {differenceInHours(new Date(), d) < 24 &&
+                          ` • ${format(d, 'HH:mm')}`}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
-          )}
+          ))}
+
+          {/* sentinel */}
+          <div ref={sentinelRef} />
+
+          {isFetchingNextPage && <SkeletonGrid />}
         </>
       )}
     </div>
   );
 };
 
-/* ---- tiny reusable select ---- */
+/* ---- Select (piccola utility) ---- */
 const Select: React.FC<{
   label: string;
   value: string;
@@ -503,6 +659,18 @@ const Select: React.FC<{
         </option>
       ))}
     </select>
+  </div>
+);
+
+/* ---- Skeleton per loading ---- */
+const SkeletonGrid: React.FC = () => (
+  <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+    {Array.from({ length: 6 }).map((_, i) => (
+      <div
+        key={i}
+        className="h-24 rounded-lg bg-[#02303a] animate-pulse"
+      />
+    ))}
   </div>
 );
 

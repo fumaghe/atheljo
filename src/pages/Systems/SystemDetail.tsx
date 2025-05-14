@@ -844,6 +844,73 @@ function SystemDetail() {
 
   const displayedHistory = chartHistBlur ? dummyHistory : historyChartData;
   const displayedForecast = chartForeBlur ? dummyForecast : forecastChartData;
+  const [snapMetric, setSnapMetric] = useState<'percent' | 'ratio'>('percent');
+
+  // ==================== DATI GRAFICO SNAP ====================
+
+  const snapChartData = {
+    datasets: [
+      {
+        label: snapMetric === 'percent' ? 'Snapshot %' : 'Snap / Usage Ratio',
+        data: filteredTelemetry.map(p => ({
+          x: p.date,
+          y:
+            snapMetric === 'percent'
+              ? p.perc_snap
+              : p.perc_used > 0
+              ? Number(((p.perc_snap / p.perc_used) * 100).toFixed(2))
+              : 0
+        })),
+        borderColor: '#f8485e',
+        backgroundColor: 'rgba(248,72,94,0.2)',
+        tension: 0.2,
+        pointRadius: 0,
+        fill: true
+      }
+    ]
+  };
+
+  const snapChartOptions: ChartOptions<'line'> = {
+    responsive: true,
+    maintainAspectRatio: false,
+    scales: {
+      y: {
+        beginAtZero: true,
+        max: 100,
+        grid: { color: 'rgba(255,255,255,0.1)' },
+        ticks: {
+          color: '#fff',
+          callback: (val) => `${val}%`
+        }
+      },
+      x: {
+        type: 'time',
+        time: { unit: 'month', displayFormats: { month: 'MMM yyyy' } },
+        grid: { color: 'rgba(255,255,255,0.1)' },
+        ticks: { color: '#fff' }
+      }
+    },
+    plugins: {
+      legend: { position: 'top', labels: { color: '#fff' } },
+      tooltip: {
+        mode: 'index',
+        intersect: false,
+        backgroundColor: '#0b3c43',
+        titleColor: '#fff',
+        bodyColor: '#fff',
+        borderColor: '#22c1d4',
+        borderWidth: 1,
+        padding: 12,
+        callbacks: {
+          label: (context) => {
+            const y = context.parsed.y ?? 0;
+            return `${context.dataset.label}: ${y.toFixed(2)}%`;
+          }
+        }
+      }
+    },
+    interaction: { intersect: false, mode: 'index' }
+  };
 
   const chartOptions: ChartOptions<'line'> = {
     responsive: true,
@@ -1218,6 +1285,42 @@ function SystemDetail() {
           )}
         </div>
       ) : null}
+
+      {/* CHART - Snapshot History */}
+      <div className="relative bg-[#0b3c43] rounded-lg p-6 shadow-lg border border-[#22c1d4]/10">
+        <div>
+          <div className="flex items-center justify-between mb-6">
+            <div className="flex items-center gap-2">
+              <Camera className="w-6 h-6 text-[#22c1d4]" />
+              <h2 className="text-xl text-[#eeeeee] font-semibold">Snapshot History</h2>
+            </div>
+            <div className="flex gap-3">
+              <select
+                value={timeRange}
+                onChange={e => setTimeRange(e.target.value)}
+                className="bg-[#06272b] text-[#eeeeee] rounded px-3 py-1 border border-[#22c1d4]/20"
+              >
+                <option value="1m">Last Month</option>
+                <option value="3m">Last 3 Months</option>
+                <option value="6m">Last 6 Months</option>
+                <option value="1y">Last Year</option>
+                <option value="all">All</option>
+              </select>
+              <select
+                value={snapMetric}
+                onChange={e => setSnapMetric(e.target.value as 'percent' | 'ratio')}
+                className="bg-[#06272b] text-[#eeeeee] rounded px-3 py-1 border border-[#22c1d4]/20"
+              >
+                <option value="percent">Snapshot %</option>
+                <option value="ratio">Snap / Usage Ratio</option>
+              </select>
+            </div>
+          </div>
+          <div className="h-[400px]">
+            <Line data={snapChartData} options={snapChartOptions} redraw />
+          </div>
+        </div>
+      </div>
 
       {/* CHART - UsageForecast */}
       {chartForeCan || chartForeBlur ? (
