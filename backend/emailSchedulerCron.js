@@ -19,11 +19,11 @@ const SYSTEMS_CSV_PATH = 'data/systems_data.csv';
 
 /**
  * Runs every minute. Fetches pending ScheduleMail docs, composes their
- * messages (HTML‑formatted if runAlgorithm = true) and sends via SMTP.
+ * messages (HTML-formatted if runAlgorithm = true) and sends via SMTP.
  */
 cron.schedule('*/1 * * * *', async () => {
   const now = new Date();
-  console.log('[CRON‑MAIL] checking scheduled mails –', now.toISOString());
+  console.log('[CRON-MAIL] checking scheduled mails –', now.toISOString());
 
   // 1) Pick up due schedules
   const snap = await firestore
@@ -33,7 +33,7 @@ cron.schedule('*/1 * * * *', async () => {
 
   if (snap.empty) return;
 
-  // 2) Configure SMTP (Gmail / custom SMTP)
+  // 2) Configure SMTP (Gmail / custom SMTP)
   const transporter = nodemailer.createTransport({
     service: 'gmail',
     auth: {
@@ -47,7 +47,7 @@ cron.schedule('*/1 * * * *', async () => {
     const sched = { id: doc.id, ...doc.data() };
 
     /* --------------------------------------------------------------
-     * 3‑a) Optional attachments
+     * 3-a) Optional attachments
      * -------------------------------------------------------------- */
     const attachments = [];
     if (sched.attachReport) {
@@ -60,10 +60,14 @@ cron.schedule('*/1 * * * *', async () => {
           company: sched.company,
           logoDataUrl: null,
           systemName: sched.host,
-          aggregatedStats: sched.host === 'all' ? computeAggregatedStats(systemsData) : null,
-          health: sched.host !== 'all' ? getEnhancedSystemHealthScore(
-            systemsData.find(s => s.hostid === sched.host)
-          ) : null,
+          aggregatedStats: sched.host === 'all'
+            ? computeAggregatedStats(systemsData)
+            : null,
+          health: sched.host !== 'all'
+            ? getEnhancedSystemHealthScore(
+                systemsData.find(s => s.hostid === sched.host)
+              )
+            : null,
           forecast: []
         });
 
@@ -80,42 +84,53 @@ cron.schedule('*/1 * * * *', async () => {
     }
 
     /* --------------------------------------------------------------
-     * 3‑b) Build email body (HTML + plain‑text fallback)
+     * 3-b) Build email body (HTML + plain-text fallback)
      * -------------------------------------------------------------- */
     let htmlBody = sched.body || '';
+
     if (sched.runAlgorithm) {
       try {
-        htmlBody = await generateSystemSummary();
+        console.log(
+          `[CRON-MAIL] generating summary for scheduleId=${sched.id} companies=[${(
+            sched.companies || []
+          ).join(',')}] includeSlashPools=${sched.includeSlashPools}`
+        );
+
+        // Pass the saved companies & includeSlashPools to the summary generator:
+        htmlBody = await generateSystemSummary({
+          companies:           sched.companies,
+          includeSlashPools:   sched.includeSlashPools
+        });
       } catch (err) {
-        console.error('[CRON‑MAIL] error generating summary:', err);
-        // keep sched.body (may be plain text)
+        console.error('[CRON-MAIL] error generating summary:', err);
+        // fallback: keep sched.body if provided
       }
     }
 
-    // plain‑text fallback (strip tags)
+    // plain-text fallback (strip tags)
     const textBody = htmlBody ? htmlToText(htmlBody, { wordwrap: 100 }) : '';
 
     /* --------------------------------------------------------------
-     * 3‑c) Send email
+     * 3-c) Send email
      * -------------------------------------------------------------- */
     const mailOptions = {
-      from: process.env.EMAIL_USER || 'no-reply@storvix.eu',
-      to: Array.isArray(sched.recipients) ? sched.recipients.join(',') : sched.recipients,
+      from:    process.env.EMAIL_USER || 'no-reply@storvix.eu',
+      to:      Array.isArray(sched.recipients) ? sched.recipients.join(',') : sched.recipients,
       subject: sched.subject || 'Systems Status Summary',
-      html: htmlBody,
-      text: textBody,
+      html:    htmlBody,
+      text:    textBody,
       attachments
     };
 
     try {
       await transporter.sendMail(mailOptions);
-      console.log(`[CRON‑MAIL] sent mail scheduleId=${sched.id}`);
+      console.log(`[CRON-MAIL] sent mail scheduleId=${sched.id}`);
     } catch (err) {
-      console.error('[CRON‑MAIL] error sending mail', err);
+      console.error('[CRON-MAIL] error sending mail', err);
     }
 
     /* --------------------------------------------------------------
-     * 3‑d) Reschedule or delete
+     * 3-d) Reschedule or delete
      * -------------------------------------------------------------- */
     let nextRunAt = null;
     if (sched.frequency && sched.frequency !== 'once') {
@@ -123,9 +138,15 @@ cron.schedule('*/1 * * * *', async () => {
     }
 
     if (nextRunAt) {
-      await firestore.collection('ScheduleMail').doc(sched.id).update({ lastRunAt: now, nextRunAt });
+      await firestore
+        .collection('ScheduleMail')
+        .doc(sched.id)
+        .update({ lastRunAt: now, nextRunAt });
     } else {
-      await firestore.collection('ScheduleMail').doc(sched.id).delete();
+      await firestore
+        .collection('ScheduleMail')
+        .doc(sched.id)
+        .delete();
     }
   }
 });

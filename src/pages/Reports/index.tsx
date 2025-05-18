@@ -1,5 +1,5 @@
 // src/pages/Reports/index.tsx
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, Fragment } from 'react';
 import { Navigate } from 'react-router-dom';
 import { FaEnvelope, FaCalendarAlt } from 'react-icons/fa';
 import {
@@ -13,7 +13,6 @@ import {
 
 import { useAuth } from '../../context/AuthContext';
 import { useSubscriptionPermissions } from '../../hooks/useSubscriptionPermissions';
-import NoPermission from '../../pages/NoPermission';
 
 import firestore from '../../firebaseClient';
 import {
@@ -27,12 +26,39 @@ import {
 } from 'firebase/firestore';
 import { generateSystemSummary } from '../../utils/generateSystemSummary';
 
-/* --------------------------- TYPES & CONSTANTS -------------------------- */
+/* ------------------------------------------------------------------ */
+/*                           HELPERS                                  */
+/* ------------------------------------------------------------------ */
+type Role = 'admin' | 'admin_employee' | 'customer';
+
+const getAccessibleCompanies = (user: any): string[] => {
+  if (!user) return [];
+  const role: Role = user.role;
+  if (role === 'admin') return ['*'];
+  if (role === 'admin_employee') return user.visibleCompanies ?? [];
+  if (role === 'customer') return [user.company];
+  return [];
+};
+
+const scheduleBelongsToUser = (m: MailSchedule, user: any) => {
+  const role: Role = user.role;
+  const comps = m.companies ?? [m.company]; // fallback per doc legacy
+  if (role === 'admin') return true;
+  if (role === 'admin_employee') {
+    const vis = user.visibleCompanies ?? [];
+    return comps.some((c) => vis.includes(c));
+  }
+  return comps.includes(user.company);
+};
+
+/* --------------------------- TYPES & CONSTANTS ---------------------- */
 type Frequency = 'once' | 'hourly' | 'daily' | 'weekly' | 'monthly' | 'custom';
 
 interface MailSchedule {
   id: string;
-  company: string;
+  companies: string[];        // ALWAYS present grazie al mapping
+  includeSlashPools: boolean;
+  company: string;            // legacy
   createdBy: string;
   createdAt: Timestamp;
 
@@ -56,7 +82,7 @@ const freqLabels: Record<Exclude<Frequency, 'custom'>, string> = {
   monthly: 'Every month',
 };
 
-/* ----------------------------- MAIN PAGE ------------------------------ */
+/* ----------------------------- MAIN PAGE --------------------------- */
 export default function EmailReports() {
   const { user, isAuthenticated, isInitializingSession } = useAuth();
 
@@ -87,20 +113,28 @@ export default function EmailReports() {
   );
 }
 
-/* ---------------------------------------------------------------------- */
-/*               SECTION 1 · EMAIL SCHEDULING FORM                       */
-/* ---------------------------------------------------------------------- */
+/* ------------------------------------------------------------------- */
+/*               SECTION 1 · EMAIL SCHEDULING FORM                     */
+/* ------------------------------------------------------------------- */
 function ScheduleEmailSection({ user }: { user: any }) {
   const { shouldBlur } = useSubscriptionPermissions('Emails', 'Schedule Email');
 
+  /* company & pool state */
+  const accessible = getAccessibleCompanies(user);
+  const [selCompanies, setSelCompanies] = useState<string[]>(
+    accessible[0] === '*' ? [] : accessible
+  );
+  const [includeSlashPools, setIncludeSlashPools] = useState(false);
+
+  /* email & schedule state */
   const [recipients, setRecipients] = useState<string[]>([]);
   const [newRecipient, setNewRecipient] = useState('');
   const [subject, setSubject] = useState('');
   const [body, setBody] = useState('');
   const [firstRun, setFirstRun] = useState('');
   const [frequency, setFrequency] = useState<Frequency>('once');
-  const [customInterval, setCustomInterval] = useState<number>(0);
-  const [runAlgorithm, setRunAlgorithm] = useState<boolean>(false);
+  const [customInterval, setCustomInterval] = useState(0);
+  const [runAlgorithm, setRunAlgorithm] = useState(false);
   const [notification, setNotification] = useState('');
   const [generating, setGenerating] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -114,9 +148,12 @@ function ScheduleEmailSection({ user }: { user: any }) {
     setFrequency('once');
     setCustomInterval(0);
     setRunAlgorithm(false);
+    if (accessible[0] !== '*') setSelCompanies(accessible);
+    setIncludeSlashPools(false);
     setEditingId(null);
   };
 
+  /* ---------------------- handlers ---------------------- */
   const handleAddRecipient = () => {
     if (newRecipient.trim() && !recipients.includes(newRecipient.trim())) {
       setRecipients([...recipients, newRecipient.trim()]);
@@ -127,7 +164,16 @@ function ScheduleEmailSection({ user }: { user: any }) {
   const handleGenerate = async () => {
     setGenerating(true);
     try {
-      const summary = await generateSystemSummary();
+      const summary = await (generateSystemSummary as any)({
+        windowDays: 21,
+        companies:
+          selCompanies.length > 0
+            ? selCompanies
+            : accessible[0] === '*'
+            ? ['*']
+            : accessible,
+        includeSlashPools,
+      });
       setBody(summary);
     } catch (err) {
       console.error(err);
@@ -143,9 +189,18 @@ function ScheduleEmailSection({ user }: { user: any }) {
       return;
     }
     try {
+      const companiesToSave =
+        selCompanies.length > 0
+          ? selCompanies
+          : accessible[0] === '*'
+          ? ['*']
+          : accessible;
+
       const payload: Omit<MailSchedule, 'id'> = {
         createdBy: user.id,
-        company: user.company,
+        company: user.company, // legacy
+        companies: companiesToSave,
+        includeSlashPools,
         recipients,
         subject,
         body,
@@ -183,6 +238,8 @@ function ScheduleEmailSection({ user }: { user: any }) {
     if (m.frequency === 'custom' && m.customInterval) {
       setCustomInterval(m.customInterval);
     }
+    setSelCompanies(m.companies);
+    setIncludeSlashPools(m.includeSlashPools ?? false);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
@@ -190,11 +247,60 @@ function ScheduleEmailSection({ user }: { user: any }) {
     (window as any).loadEmailForEdit = loadForEdit;
   }, []);
 
+  /* ----------------------------- UI ------------------------------ */
   return (
     <div className="space-y-6 relative">
       <h2 className="text-2xl font-bold text-[#f8485e] mb-4">Schedule Email</h2>
 
       <div className={shouldBlur ? 'blur-sm pointer-events-none space-y-4' : 'space-y-4'}>
+        {/* Companies selector & pool toggle */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div>
+            <label className="block text-sm mb-1 text-[#eee]">Companies</label>
+            {accessible[0] === '*' ? (
+              <select
+                multiple
+                value={selCompanies}
+                onChange={(e) =>
+                  setSelCompanies(Array.from(e.target.selectedOptions).map((o) => o.value))
+                }
+                className="w-full h-40 p-2 bg-[#06272b] text-[#eee] rounded border border-[#22c1d4]/20"
+              >
+                <CompaniesOptions />
+              </select>
+            ) : user.role === 'admin_employee' ? (
+              <select
+                multiple
+                value={selCompanies}
+                onChange={(e) =>
+                  setSelCompanies(Array.from(e.target.selectedOptions).map((o) => o.value))
+                }
+                className="w-full h-40 p-2 bg-[#06272b] text-[#eee] rounded border border-[#22c1d4]/20"
+              >
+                {accessible.map((c) => (
+                  <option key={c} value={c}>
+                    {c}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <p className="text-[#22c1d4]">{user.company}</p>
+            )}
+          </div>
+
+          <div className="flex items-end">
+            <label className="flex gap-2 items-center text-sm text-[#eee]">
+              <input
+                type="checkbox"
+                checked={includeSlashPools}
+                onChange={() => setIncludeSlashPools((prev) => !prev)}
+                className="form-checkbox h-5 w-5 text-[#22c1d4] bg-[#06272b] rounded"
+              />
+              <span>Include pools with “/”</span>
+            </label>
+          </div>
+        </div>
+
         {/* Recipients & Subject */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
@@ -220,9 +326,7 @@ function ScheduleEmailSection({ user }: { user: any }) {
                   <li key={i} className="flex items-center justify-between">
                     <span>{r}</span>
                     <button
-                      onClick={() =>
-                        setRecipients(recipients.filter((_, idx) => idx !== i))
-                      }
+                      onClick={() => setRecipients(recipients.filter((_, idx) => idx !== i))}
                       className="text-red-400 hover:text-red-300"
                     >
                       <CloseIcon size={14} />
@@ -357,9 +461,34 @@ function ScheduleEmailSection({ user }: { user: any }) {
   );
 }
 
-/* ---------------------------------------------------------------------- */
-/*            SECTION 2 · LIST OF SCHEDULED EMAILS                        */
-/* ---------------------------------------------------------------------- */
+/* componente per popolare tutte le company (solo per admin) */
+function CompaniesOptions() {
+  const [opts, setOpts] = useState<string[]>([]);
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      const snap = await getDocs(collection(firestore, 'companies'));
+      const all = snap.docs.map((d) => d.id).sort();
+      if (mounted) setOpts(all);
+    })();
+    return () => {
+      mounted = false;
+    };
+  }, []);
+  return (
+    <Fragment>
+      {opts.map((c) => (
+        <option key={c} value={c}>
+          {c}
+        </option>
+      ))}
+    </Fragment>
+  );
+}
+
+/* ------------------------------------------------------------------- */
+/*            SECTION 2 · LIST OF SCHEDULED EMAILS                     */
+/* ------------------------------------------------------------------- */
 function ScheduledEmailsSection({ user }: { user: any }) {
   const { shouldBlur } = useSubscriptionPermissions('Emails', 'History Section');
 
@@ -374,16 +503,18 @@ function ScheduledEmailsSection({ user }: { user: any }) {
       setLoading(true);
       try {
         const snap = await getDocs(collection(firestore, 'ScheduleMail'));
-        const all = snap.docs.map(
-          (d) =>
-            ({
-              id: d.id,
-              ...(d.data() as Omit<MailSchedule, 'id'>),
-            } as MailSchedule)
-        );
+        const all = snap.docs.map((d) => {
+          const data = d.data() as any;
+          return {
+            id: d.id,
+            ...data,
+            companies: data.companies ?? [data.company],           // fallback
+            includeSlashPools: data.includeSlashPools ?? false,   // fallback
+          } as MailSchedule;
+        });
 
         const list = all
-          .filter((m) => m.company === user.company)
+          .filter((m) => scheduleBelongsToUser(m, user))
           .sort((a, b) => a.nextRunAt.seconds - b.nextRunAt.seconds);
 
         setMailSchedules(list);
@@ -408,6 +539,7 @@ function ScheduledEmailsSection({ user }: { user: any }) {
     }
   };
 
+  /* --------------------------- UI ------------------------- */
   return (
     <div className="space-y-6">
       <h2 className="text-2xl font-bold text-[#f8485e] mb-4">Scheduled Emails</h2>
@@ -415,9 +547,7 @@ function ScheduledEmailsSection({ user }: { user: any }) {
       <div className={shouldBlur ? 'blur-sm pointer-events-none space-y-4' : 'space-y-4'}>
         {loading && <p className="text-[#22c1d4]">Loading…</p>}
 
-        {!loading && mailSchedules.length === 0 && (
-          <p className="text-[#eee]">No scheduled emails</p>
-        )}
+        {!loading && mailSchedules.length === 0 && <p className="text-[#eee]">No scheduled emails</p>}
 
         {mailSchedules.map((m) => {
           const nextDate = new Date(m.nextRunAt.seconds * 1000);
@@ -432,9 +562,7 @@ function ScheduledEmailsSection({ user }: { user: any }) {
               : freqLabels[m.frequency];
 
           const isActive = nextDate > new Date();
-          const statusColor = isActive
-            ? 'bg-green-100 text-green-800'
-            : 'bg-gray-100 text-gray-600';
+          const statusColor = isActive ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-600';
 
           return (
             <div
@@ -442,9 +570,7 @@ function ScheduledEmailsSection({ user }: { user: any }) {
               className="flex items-center justify-between bg-[#06272b] rounded-xl p-4 shadow transition-colors duration-200 hover:bg-[#0f4e56]"
             >
               <div className="flex items-center gap-3">
-                <span
-                  className={`px-2 py-0.5 text-xs font-medium rounded-full ${statusColor}`}
-                >
+                <span className={`px-2 py-0.5 text-xs font-medium rounded-full ${statusColor}`}>
                   {isActive ? 'Active' : 'Completed'}
                 </span>
 
@@ -453,6 +579,10 @@ function ScheduledEmailsSection({ user }: { user: any }) {
                   <p className="text-sm text-[#22c1d4]">{nextStr}</p>
                   <p className="text-xs text-[#eee] flex items-center gap-1 mt-1">
                     <FaCalendarAlt /> {freqLabel}
+                  </p>
+                  <p className="text-xs text-[#22c1d4] mt-1">
+                    {m.companies[0] === '*' ? 'All companies' : m.companies.join(', ')}
+                    {m.includeSlashPools ? ' · pool “/” included' : ''}
                   </p>
                 </div>
               </div>
@@ -486,9 +616,7 @@ function ScheduledEmailsSection({ user }: { user: any }) {
       {shouldBlur && (
         <div className="absolute inset-0 z-10 flex flex-col items-center justify-center text-center px-4">
           <Lock className="w-8 h-8 text-white mb-2" />
-          <span className="text-white">
-            Upgrade your subscription to view history.
-          </span>
+          <span className="text-white">Upgrade your subscription to view history.</span>
         </div>
       )}
     </div>
