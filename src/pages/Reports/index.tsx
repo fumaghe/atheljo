@@ -97,7 +97,7 @@ export default function EmailReports() {
   return (
     <div className="min-h-screen bg-[#06272b] py-6">
       <div className="max-w-7xl mx-auto px-6 lg:px-8">
-        <h1 className="flex items-center text-3xl font-bold text-[#f8485e] mb-6">
+        <h1 className="flex items-center text-3xl font-bold text-[#eeeeee] mb-6">
           <FaEnvelope className="text-[#22c1d4] mr-2" />
           Email Scheduler
         </h1>
@@ -160,7 +160,6 @@ function ScheduleEmailSection({ user }: { user: any }) {
   const [customInterval, setCustomInterval] = useState(0);
   const [runAlgorithm, setRunAlgorithm] = useState(false);
   const [notification, setNotification] = useState('');
-  const [generating, setGenerating] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
 
   const resetForm = () => {
@@ -185,27 +184,6 @@ function ScheduleEmailSection({ user }: { user: any }) {
     }
   };
 
-  const handleGenerate = async () => {
-    setGenerating(true);
-    try {
-      const summary = await (generateSystemSummary as any)({
-        windowDays: 21,
-        companies:
-          selCompanies.length > 0
-            ? selCompanies
-            : accessible[0] === '*'
-            ? ['*']
-            : accessible,
-        includeSlashPools,
-      });
-      setBody(summary);
-    } catch (err) {
-      console.error(err);
-      setNotification('Errore nella generazione del riepilogo.');
-    } finally {
-      setGenerating(false);
-    }
-  };
 
   const handleSave = async () => {
     if (recipients.length === 0 || !firstRun) {
@@ -274,7 +252,7 @@ function ScheduleEmailSection({ user }: { user: any }) {
   /* ----------------------------- UI ------------------------------ */
   return (
     <div className="space-y-6 relative">
-      <h2 className="text-2xl font-bold text-[#f8485e] mb-4">Schedule Email</h2>
+      <h2 className="text-2xl font-bold text-[#eeeeee] mb-4">Schedule Email</h2>
 
       <div className={shouldBlur ? 'blur-sm pointer-events-none space-y-4' : 'space-y-4'}>
         {/* Companies selector & pool toggle */}
@@ -326,19 +304,8 @@ function ScheduleEmailSection({ user }: { user: any }) {
               />
             )}
           </div>
-
-          <div className="flex items-end">
-            <label className="flex gap-2 items-center text-sm text-[#eee]">
-              <input
-                type="checkbox"
-                checked={includeSlashPools}
-                onChange={() => setIncludeSlashPools(prev => !prev)}
-                className="form-checkbox h-5 w-5 text-[#22c1d4] bg-[#06272b] rounded"
-              />
-              <span>Include pools with “/”</span>
-            </label>
+          
           </div>
-        </div>
         
         {/* Recipients & Subject */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -391,22 +358,29 @@ function ScheduleEmailSection({ user }: { user: any }) {
         <div>
           <label className="block text-sm mb-1 text-[#eee]">Message</label>
           <div className="flex items-center gap-2 mb-2">
+            {/* Run Algorithm */}
             <button
-              onClick={handleGenerate}
-              disabled={generating}
-              className="px-4 py-2 bg-[#f0ad4e] text-[#061e22] font-bold rounded hover:bg-[#ffc107] transition"
+              onClick={() => setRunAlgorithm(prev => !prev)}
+              className={`px-4 py-2 font-bold rounded transition transform hover:scale-105 ${
+                runAlgorithm
+                  ? 'bg-[#22c1d4] text-[#061e22]'
+                  : 'bg-gray-600 text-white'
+              }`}
             >
-              {generating ? 'Genero…' : 'Genera Riepilogo'}
+              {runAlgorithm ? 'Run Algorithm: On' : 'Run Algorithm: Off'}
             </button>
-            <label className="flex items-center text-sm text-[#eee] gap-2">
-              <input
-                type="checkbox"
-                checked={runAlgorithm}
-                onChange={() => setRunAlgorithm(!runAlgorithm)}
-                className="form-checkbox h-5 w-5 text-[#22c1d4] bg-[#06272b] rounded"
-              />
-              <span>Run Algorithm on Schedule</span>
-            </label>
+
+            {/* Datasets */}
+            <button
+              onClick={() => setIncludeSlashPools(prev => !prev)}
+              className={`px-4 py-2 font-bold rounded transition transform hover:scale-105 ${
+                includeSlashPools
+                  ? 'bg-[#22c1d4] text-[#061e22]'
+                  : 'bg-gray-600 text-white'
+              }`}
+            >
+              {includeSlashPools ? 'Datasets on' : 'Datasets off'}
+            </button>
           </div>
           <textarea
             rows={12}
@@ -581,7 +555,7 @@ function ScheduledEmailsSection({ user }: { user: any }) {
   /* --------------------------- UI ------------------------- */
   return (
     <div className="space-y-6">
-      <h2 className="text-2xl font-bold text-[#f8485e] mb-4">Scheduled Emails</h2>
+      <h2 className="text-2xl font-bold text-[#eeeeee] mb-4">Scheduled Emails</h2>
 
       <div className={shouldBlur ? 'blur-sm pointer-events-none space-y-4' : 'space-y-4'}>
         {loading && <p className="text-[#22c1d4]">Loading…</p>}
@@ -621,7 +595,7 @@ function ScheduledEmailsSection({ user }: { user: any }) {
                   </p>
                   <p className="text-xs text-[#22c1d4] mt-1">
                     {m.companies[0] === '*' ? 'All companies' : m.companies.join(', ')}
-                    {m.includeSlashPools ? ' · pool “/” included' : ''}
+                    {m.includeSlashPools ? ' · Datasets included' : ''}
                   </p>
                 </div>
               </div>

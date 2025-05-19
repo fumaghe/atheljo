@@ -512,7 +512,7 @@ export default function AlertsHistory() {
   return (
     <div className="p-6">
       <div className="flex items-center justify-between mb-4">
-        <h1 className="text-2xl font-semibold flex items-center gap-2 text-cyan-300">
+        <h1 className="text-2xl font-semibold flex items-center gap-2 text-white-300">
           <Bell className="w-6 h-6" />
           Alerts History
         </h1>

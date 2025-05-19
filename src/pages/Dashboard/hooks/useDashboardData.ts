@@ -43,34 +43,39 @@ function getFilteredUnitIds(
   user: any,
   filters: FilterSelections
 ): string[] {
-  const { company, type, pool, telemetry } = filters
+  const { company, type, pool, telemetry } = filters;
 
   return aggregatedSystems
     .filter((s) => {
-      // role checks
+      // 1) visibilità per admin_employee
       if (user?.role === 'admin_employee') {
-        const visibleCompanies = user.visibleCompanies || []
-        if (visibleCompanies.length > 0 && !visibleCompanies.includes(s.company)) {
-          return false
+        const visible = user.visibleCompanies || [];
+        if (visible.length > 0 && !visible.includes(s.company)) {
+          return false;
         }
-      } else if (user?.role === 'employee' && s.company !== user.company) {
-        return false
       }
-      // admin + explicit company filter
+      // 2) employee e customer vedono solo la loro company
+      else if (
+        (user?.role === 'employee' || user?.role === 'customer') &&
+        s.company !== user.company
+      ) {
+        return false;
+      }
+      // 3) admin + filtro esplicito
       if (user?.role === 'admin' && company !== 'all' && s.company !== company) {
-        return false
+        return false;
       }
 
-      // Type, pool, telemetry
-      if (type !== 'all' && s.type !== type) return false
-      if (pool !== 'all' && s.pool !== pool) return false
+      // 4) altri filtri (type, pool, telemetry)
+      if (type !== 'all' && s.type !== type) return false;
+      if (pool !== 'all' && s.pool !== pool) return false;
       if (telemetry !== 'all') {
-        const shouldBeActive = telemetry === 'active'
-        if (s.sending_telemetry !== shouldBeActive) return false
+        const shouldBeActive = telemetry === 'active';
+        if (s.sending_telemetry !== shouldBeActive) return false;
       }
-      return true
+      return true;
     })
-    .map((s) => s.unit_id)
+    .map((s) => s.unit_id);
 }
 
 /**
@@ -124,48 +129,48 @@ export function useDashboardData(user: any) {
 
   // =============== 2) Build dynamic filter options ===============
   const filterOptions = useMemo<FilterOptions>(() => {
-    const days = parseInt(filters.timeRange)
-    const cutoffDate = subDays(new Date(), days)
+    const days = parseInt(filters.timeRange);
+    const cutoffDate = subDays(new Date(), days);
 
-    // from rawSystemsDocs, apply role checks + date check
+    // raw → allowed by role + date
     const allowedDocs = rawSystemsDocs.filter((s) => {
       if (user?.role === 'admin_employee') {
-        const visible = user.visibleCompanies || []
-        if (visible.length > 0 && !visible.includes(s.company)) return false
-      } else if (user?.role === 'employee' && s.company !== user.company) {
-        return false
+        const visible = user.visibleCompanies || [];
+        if (visible.length > 0 && !visible.includes(s.company)) return false;
       }
-      // time check
-      if (new Date(s.last_date) < cutoffDate) return false
-      return true
-    })
+      // employee e customer vedono solo la loro company
+      else if (
+        (user?.role === 'employee' || user?.role === 'customer') &&
+        s.company !== user.company
+      ) {
+        return false;
+      }
+      if (new Date(s.last_date) < cutoffDate) return false;
+      return true;
+    });
 
     // build companies
-    let companies: string[] = []
+    let companies: string[] = [];
     if (user?.role === 'admin_employee') {
-      const visible = user.visibleCompanies || []
-      if (visible.length > 0) {
-        companies = ['all', ...visible]
-      } else {
-        companies = ['all']
-      }
-    } else if (user?.role === 'employee') {
-      companies = [user.company]
-    } else {
-      const discovered = Array.from(new Set(allowedDocs.map((s) => s.company)))
-      companies = ['all', ...discovered]
+      const visible = user.visibleCompanies || [];
+      companies = visible.length > 0 ? ['all', ...visible] : ['all'];
+    }
+    else if (user?.role === 'employee' || user?.role === 'customer') {
+      companies = [user.company];
+    }
+    else {
+      const discovered = Array.from(new Set(allowedDocs.map((s) => s.company)));
+      companies = ['all', ...discovered];
     }
 
-    // build types
-    const discoveredTypes = Array.from(new Set(allowedDocs.map((s) => s.type)))
-    const types = ['all', ...discoveredTypes]
+    // build types & pools as before
+    const discoveredTypes = Array.from(new Set(allowedDocs.map((s) => s.type)));
+    const types = ['all', ...discoveredTypes];
+    const discoveredPools = Array.from(new Set(allowedDocs.map((s) => s.pool)));
+    const pools = ['all', ...discoveredPools];
 
-    // build pools
-    const discoveredPools = Array.from(new Set(allowedDocs.map((s) => s.pool)))
-    const pools = ['all', ...discoveredPools]
-
-    return { companies, types, pools }
-  }, [rawSystemsDocs, filters.timeRange, user])
+    return { companies, types, pools };
+  }, [rawSystemsDocs, filters.timeRange, user]);
 
   // if user is not admin, force filters.company to the user’s single company
   useEffect(() => {
@@ -435,50 +440,53 @@ export function useDashboardData(user: any) {
   }, [capacityData])
 
   // =============== 6) aggregatedStats ===============
-  const aggregatedStats = useMemo<AggregatedStats | null>(() => {
-    if (systemsData.length === 0) return null;
-  
-    const days = parseInt(filters.timeRange);
-    const cutoffDate = subDays(new Date(), days);
-  
-    const filteredSystems = systemsData.filter((s) => {
-      // 1) visibilità per admin_employee
-      if (user?.role === 'admin_employee') {
-        const visible = user.visibleCompanies || [];
-        if (visible.length > 0 && !visible.includes(s.company)) {
-          return false;
-        }
-      }
-  
-      // 2) filtro EXPLICITO company per admin e admin_employee
-      if (
-        (user?.role === 'admin' || user?.role === 'admin_employee') &&
-        filters.company !== 'all' &&
-        s.company !== filters.company
-      ) {
+const aggregatedStats = useMemo<AggregatedStats | null>(() => {
+  if (systemsData.length === 0) return null;
+
+  const days = parseInt(filters.timeRange);
+  const cutoffDate = subDays(new Date(), days);
+
+  const filteredSystems = systemsData.filter((s) => {
+    // 1) admin_employee
+    if (user?.role === 'admin_employee') {
+      const visible = user.visibleCompanies || [];
+      if (visible.length > 0 && !visible.includes(s.company)) {
         return false;
       }
-  
-      // 3) altri filtri
-      if (filters.type !== 'all' && s.type !== filters.type) return false;
-      if (filters.pool !== 'all' && s.pool !== filters.pool) return false;
-      if (filters.telemetry !== 'all') {
-        const shouldBeActive = filters.telemetry === 'active';
-        if (s.sending_telemetry !== shouldBeActive) return false;
-      }
-  
-      // 4) dati di capacity recenti
-      if (!s.hostid) return false;
-      const hasRecentCap = capacityData.some((c) =>
-        c.hostid === s.hostid &&
-        c.pool === s.pool &&
-        new Date(c.date) >= cutoffDate
-      );
-      return hasRecentCap;
-    });
-  
-    if (filteredSystems.length === 0) return null;
+    }
+    // 2) admin + filtro esplicito
+    if (
+      user?.role === 'admin' &&
+      filters.company !== 'all' &&
+      s.company !== filters.company
+    ) {
+      return false;
+    }
+    // 3) employee e customer → solo la loro company
+    if (
+      (user?.role === 'employee' || user?.role === 'customer') &&
+      s.company !== user.company
+    ) {
+      return false;
+    }
+    // 4) altri filtri type/pool/telemetry
+    if (filters.type !== 'all' && s.type !== filters.type) return false;
+    if (filters.pool !== 'all' && s.pool !== filters.pool) return false;
+    if (filters.telemetry !== 'all') {
+      const shouldBeActive = filters.telemetry === 'active';
+      if (s.sending_telemetry !== shouldBeActive) return false;
+    }
+    // 5) capacity recenti
+    if (!s.hostid) return false;
+    const hasRecentCap = capacityData.some((c) =>
+      c.hostid === s.hostid &&
+      c.pool === s.pool &&
+      new Date(c.date) >= cutoffDate
+    );
+    return hasRecentCap;
+  });
 
+  if (filteredSystems.length === 0) return null;
     const totalSystems = filteredSystems.length
     let totalUsed = 0
     let totalSnapshots = 0
@@ -551,34 +559,38 @@ export function useDashboardData(user: any) {
     if (systemsData.length === 0) return [];
     const days = parseInt(filters.timeRange);
     const cutoffDate = subDays(new Date(), days);
-  
+
     return systemsData.filter((system) => {
-      // 1) visibilità per admin_employee
+      // 1) admin_employee
       if (user?.role === 'admin_employee') {
         const visible = user.visibleCompanies || [];
         if (visible.length > 0 && !visible.includes(system.company)) {
           return false;
         }
       }
-  
-      // 2) filtro EXPEDITOR company per admin e admin_employee
+      // 2) admin + filtro esplicito
       if (
-        (user?.role === 'admin' || user?.role === 'admin_employee') &&
+        user?.role === 'admin' &&
         filters.company !== 'all' &&
         system.company !== filters.company
       ) {
         return false;
       }
-  
-      // 3) altri filtri
+      // 3) employee e customer → solo la loro company
+      if (
+        (user?.role === 'employee' || user?.role === 'customer') &&
+        system.company !== user.company
+      ) {
+        return false;
+      }
+      // 4) altri filtri type/pool/telemetry
       if (filters.type !== 'all' && system.type !== filters.type) return false;
       if (filters.pool !== 'all' && system.pool !== filters.pool) return false;
       if (filters.telemetry !== 'all') {
         const shouldBeActive = filters.telemetry === 'active';
         if (system.sending_telemetry !== shouldBeActive) return false;
       }
-  
-      // 4) dati di capacity recenti
+      // 5) capacity recenti
       if (!system.hostid) return false;
       const hasRecent = capacityData.some((c) =>
         c.hostid === system.hostid &&
@@ -587,8 +599,7 @@ export function useDashboardData(user: any) {
       );
       return hasRecent;
     });
-  }, [systemsData, capacityData, filters, user]);
-  
+  }, [systemsData, capacityData, filters, user]);  
 
   // =============== 8) Group capacity data by date for charting ===============
   const groupedCapacityData = useMemo(() => {

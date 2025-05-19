@@ -155,16 +155,18 @@ const Alerts: React.FC<AlertsProps> = ({ filters }) => {
           } else if (user.role === 'admin_employee') {
             // must be in visibleCompanies or 'all'
             const vis = user.visibleCompanies || [];
-            if (vis.length > 0 && !vis.includes('all') && !vis.includes(sys.company)) {
+            if (vis.length > 0 && !vis.includes(sys.company)) {
               return;
             }
-          } else {
+          } else if (user.role === 'employee' || user.role === 'customer') {
             // normal employee
             if (sys.company !== user.company) {
               return;
             }
           }
-
+          else {
+            return;
+          }
           // Filter by company, type, pool
           if (filters.company !== 'all' && sys.company !== filters.company) {
             return;
@@ -206,20 +208,27 @@ const Alerts: React.FC<AlertsProps> = ({ filters }) => {
 
         // 2D) Filter them by (hostid+pool) in allowedKeys & date >= cutoff
         const forecastData: ForecastDoc[] = [];
+        const capacityData: CapacityDoc[] = [];
+        const cutoffDate = subDays(new Date(), parseInt(filters.timeRange));
+
         forecastSnap.forEach((doc) => {
-          const f = doc.data() as any; // refine to ForecastDoc
-          // Build the key
+          const f = doc.data() as ForecastDoc;
           const key = `${f.hostid || ''}::${f.pool || ''}`;
-          if (allowedKeys.has(key) && f.date >= cutoffISO) {
+          if (
+            allowedKeys.has(key) &&
+            new Date(f.date).getTime() >= cutoffDate.getTime()
+          ) {
             forecastData.push(f);
           }
         });
 
-        const capacityData: CapacityDoc[] = [];
         capacitySnap.forEach((doc) => {
-          const c = doc.data() as any; // refine to CapacityDoc
+          const c = doc.data() as CapacityDoc;
           const key = `${c.hostid || ''}::${c.pool || ''}`;
-          if (allowedKeys.has(key) && c.date >= cutoffISO) {
+          if (
+            allowedKeys.has(key) &&
+            new Date(c.date).getTime() >= cutoffDate.getTime()
+          ) {
             capacityData.push(c);
           }
         });
