@@ -1,5 +1,6 @@
 // src/pages/Reports/index.tsx
 import React, { useState, useEffect, Fragment } from 'react';
+import Select from 'react-select'; 
 import { Navigate } from 'react-router-dom';
 import { FaEnvelope, FaCalendarAlt } from 'react-icons/fa';
 import {
@@ -125,6 +126,29 @@ function ScheduleEmailSection({ user }: { user: any }) {
     accessible[0] === '*' ? [] : accessible
   );
   const [includeSlashPools, setIncludeSlashPools] = useState(false);
+
+    // ✏️ nuovo stato per options di react-select
+  const [companyOptions, setCompanyOptions] = useState<{ label: string; value: string }[]>([]);
+
+  // ✏️ carica le distinct companies da system_data per admin
+  useEffect(() => {
+    if (user.role !== 'admin') return;
+    (async () => {
+      const snap = await getDocs(collection(firestore, 'system_data'));
+      // estrai tutti i valori s.company
+      const all = snap.docs
+        .map(d => (d.data() as any).company)
+        .filter((c): c is string => typeof c === 'string');
+      const unique = Array.from(new Set(all)).sort();
+      setCompanyOptions([
+        { label: 'All Companies', value: '*' },
+        ...unique.map(c => ({ label: c, value: c })),
+      ]);
+    })();
+  }, [user.role]);
+
+  const showCompanySelector =
+    accessible[0] === '*' || accessible.length > 1;
 
   /* email & schedule state */
   const [recipients, setRecipients] = useState<string[]>([]);
@@ -257,34 +281,49 @@ function ScheduleEmailSection({ user }: { user: any }) {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
             <label className="block text-sm mb-1 text-[#eee]">Companies</label>
-            {accessible[0] === '*' ? (
-              <select
-                multiple
-                value={selCompanies}
-                onChange={(e) =>
-                  setSelCompanies(Array.from(e.target.selectedOptions).map((o) => o.value))
-                }
-                className="w-full h-40 p-2 bg-[#06272b] text-[#eee] rounded border border-[#22c1d4]/20"
-              >
-                <CompaniesOptions />
-              </select>
-            ) : user.role === 'admin_employee' ? (
-              <select
-                multiple
-                value={selCompanies}
-                onChange={(e) =>
-                  setSelCompanies(Array.from(e.target.selectedOptions).map((o) => o.value))
-                }
-                className="w-full h-40 p-2 bg-[#06272b] text-[#eee] rounded border border-[#22c1d4]/20"
-              >
-                {accessible.map((c) => (
-                  <option key={c} value={c}>
-                    {c}
-                  </option>
-                ))}
-              </select>
+
+            {user.role === 'customer' ? (
+              // solo testo se customer
+              <p className="text-[#22c1d4]">{accessible[0]}</p>
             ) : (
-              <p className="text-[#22c1d4]">{user.company}</p>
+              // altrimenti Select multi
+              <Select
+                isMulti
+                options={
+                  user.role === 'admin'
+                    ? companyOptions
+                    : accessible.map(c => ({ label: c, value: c }))
+                }
+                value={
+                  // mappa selCompanies a oggetti label/value
+                  (user.role === 'admin'
+                    ? companyOptions
+                    : accessible.map(c => ({ label: c, value: c }))
+                  ).filter(opt => selCompanies.includes(opt.value))
+                }
+                onChange={vals => {
+                  setSelCompanies(vals.map(v => v.value));
+                }}
+                placeholder="Select companies..."
+                className="text-[#eee] bg-[#06272b]"
+                styles={{
+                  control: (base) => ({
+                    ...base,
+                    backgroundColor: '#06272b',
+                    borderColor: '#22c1d4',
+                  }),
+                  multiValue: (base) => ({
+                    ...base,
+                    backgroundColor: '#22c1d4',
+                    color: '#061e22',
+                  }),
+                  option: (base) => ({
+                    ...base,
+                    backgroundColor: '#0b3c43',
+                    color: '#eee',
+                  }),
+                }}
+              />
             )}
           </div>
 
@@ -293,14 +332,14 @@ function ScheduleEmailSection({ user }: { user: any }) {
               <input
                 type="checkbox"
                 checked={includeSlashPools}
-                onChange={() => setIncludeSlashPools((prev) => !prev)}
+                onChange={() => setIncludeSlashPools(prev => !prev)}
                 className="form-checkbox h-5 w-5 text-[#22c1d4] bg-[#06272b] rounded"
               />
               <span>Include pools with “/”</span>
             </label>
           </div>
         </div>
-
+        
         {/* Recipients & Subject */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
