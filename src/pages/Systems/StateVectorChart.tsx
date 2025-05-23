@@ -388,14 +388,19 @@ const StateVectorChart: React.FC<StateVectorChartProps> = ({
     (async () => {
       setIsLoading(true);
       try {
+        /* === NOVITÀ: scelgo la collezione in base allo slash === */
+        const collName = pool.includes('/')
+          ? 'capacity_trends_dataset'   // dataset (sub-pool)
+          : 'capacity_trends';          // pool top-level
+
         const q = query(
-          collection(firestore, 'capacity_trends'),
+          collection(firestore, collName),
           where('pool', '==', pool),
           where('hostid', '==', hostId)
         );
         const snap = await getDocs(q);
-        const rawData: StateVectorData[] = [];
 
+        const rawData: StateVectorData[] = [];
         snap.forEach((doc) => {
           const d = doc.data() as RawData;
           const dateObj = parse(d.date, 'yyyy-MM-dd HH:mm:ss', new Date());
