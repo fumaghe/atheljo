@@ -3,7 +3,8 @@ import 'chart.js/auto';
 import 'chartjs-adapter-date-fns';
 import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Line } from 'react-chartjs-2';
+import { Line, Bar } from 'react-chartjs-2';
+import { Files } from 'lucide-react';
 import { subDays } from 'date-fns';
 import { ChartOptions, Chart, registerables } from 'chart.js';
 import annotationPlugin from 'chartjs-plugin-annotation';
@@ -30,6 +31,7 @@ import { useAuth } from '../../context/AuthContext';
 import StateVectorChart from './StateVectorChart';
 import LoadingDots from '../Dashboard/components/LoadingDots';
 import { calculateSystemHealthScore } from '../../utils/calculateSystemHealthScore';
+import FileTrendsChart from './FileTrendsChart';
 
 // Registra Chart.js e il plugin per le annotazioni
 Chart.register(...registerables, annotationPlugin);
@@ -85,6 +87,15 @@ interface ForecastData {
   time_to_90: number;
   current_usage: number;
   growth_rate: number;
+}
+interface FileTrendData {
+  date: string;
+  unit_id: string;
+  pool: string;
+  hostid?: string;
+  uploaded: number;
+  deleted: number;
+  total_files: number;
 }
 
 interface HealthMetric {
@@ -230,6 +241,9 @@ function SystemDetail() {
   const navigate = useNavigate();
   const { user } = useAuth();
 
+  const fileTrendsEnabled =
+    user?.features && user.features['file-trends'] === true;
+
   // Permessi e blur
   const { canAccess: capCan, shouldBlur: capBlur } = useSubscriptionPermissions('SystemDetail', 'Health - Capacity');
   const { canAccess: perfCan, shouldBlur: perfBlur } = useSubscriptionPermissions('SystemDetail', 'Health - Performance');
@@ -243,7 +257,8 @@ function SystemDetail() {
   const { canAccess: t100Can, shouldBlur: t100Blur } = useSubscriptionPermissions('SystemDetail', 'Forecast - TimeTo100');
   const { canAccess: chartHistCan, shouldBlur: chartHistBlur } = useSubscriptionPermissions('SystemDetail', 'Chart - UsageHistory');
   const { canAccess: chartForeCan, shouldBlur: chartForeBlur } = useSubscriptionPermissions('SystemDetail', 'Chart - UsageForecast');
-
+const featureFlags       = JSON.parse(localStorage.getItem('featureFlags') || '{}');
+const isFileTrendsEnabled = featureFlags['file-trends'];
   // Stato globale
   const [allRecords, setAllRecords] = useState<SystemData[]>([]);
   const [poolList, setPoolList] = useState<string[]>([]);
@@ -262,198 +277,205 @@ function SystemDetail() {
   const [usageUnit, setUsageUnit] = useState<string>('perc_used');
 
   // =============== 1) Caricamento dati e caching ===============
-  useEffect(() => {
-    if (!unitId) return;
-    setIsLoading(true);
-    setError(null);
-    (async () => {
-      try {
-        const now = Date.now();
-        const cached = unitCache[unitId];
-        if (cached && now - cached.timestamp < CACHE_DURATION) {
-          setAllRecords(cached.allSystemRecords);
-          const uniquePools = Array.from(new Set(cached.allSystemRecords.map((r) => r.pool)));
-          setPoolList(uniquePools);
-          let defaultPool: string | null = null;
-          let maxTime = 0;
-          for (const rec of cached.allSystemRecords) {
-            const t = new Date(rec.last_date).getTime();
-            if (t > maxTime) {
-              maxTime = t;
-              defaultPool = rec.pool;
-            }
-          }
-          setSelectedPool(defaultPool);
-          setIsLoading(false);
-          return;
-        }
+useEffect(() => {
+  if (!unitId) return;
+  setIsLoading(true);
+  setError(null);
 
-        // 1. FETCH system_data
-        const systemRef = collection(firestore, 'system_data');
-        const systemQuery = query(systemRef, where('unit_id', '==', unitId));
-        const snapshot = await getDocs(systemQuery);
-        if (snapshot.empty) {
-          setError(`No system records found for unit_id=${unitId}`);
-          setIsLoading(false);
-          return;
-        }
-        const loadedRecords: SystemData[] = [];
-        snapshot.forEach((doc) => {
-          const d = doc.data();
-          const firstDate = d.first_date ? d.first_date.replace(' ', 'T') : '';
-          const lastDate  = d.last_date  ? d.last_date.replace(' ', 'T') : '';
-          loadedRecords.push({
-            name: d.name || '',
-            hostid: d.hostid || '',
-            pool: d.pool || '',
-            unit_id: d.unit_id || '',
-            type: d.type || '',
-            used: Number(d.used),
-            avail: Number(d.avail),
-            used_snap: Number(d.used_snap),
-            perc_used: Number(d.perc_used),
-            perc_snap: Number(d.perc_snap),
-            sending_telemetry: String(d.sending_telemetry).toLowerCase() === 'true',
-            first_date: firstDate,
-            last_date: lastDate,
-            MUP: d.MUP == null ? 55 : Number(d.MUP),
-            avg_speed: Number(d.avg_speed),
-            avg_time:  Number(d.avg_time),
-            company:   d.company || ''
-          });
-        });
-        if (!loadedRecords.length) {
-          setError('No valid system records found');
-          setIsLoading(false);
-          return;
-        }
-        // (eventuali controlli permessi utente…)
+  (async () => {
+    try {
+      const now = Date.now();
+      const cached = unitCache[unitId];
+      if (cached && now - cached.timestamp < CACHE_DURATION) {
+        setAllRecords(cached.allSystemRecords);
 
-        // 2. PREP: hostid unici
-        const uniqueHostids = Array.from(new Set(loadedRecords.map(r => r.hostid)));
+        const uniquePools = Array.from(new Set(cached.allSystemRecords.map(r => r.pool)));
+        setPoolList(uniquePools);
 
-        // 3. FETCH capacity_trends (top‐level)
-        const telemQ    = query(collection(firestore, 'capacity_trends'),      where('hostid', 'in', uniqueHostids));
-        const telemSnap = await getDocs(telemQ);
-        let allTelemetryData: TelemetryData[] = [];
-        telemSnap.forEach((doc) => {
-          const td = doc.data();
-          allTelemetryData.push({
-            date:        td.date ? td.date.replace(' ', 'T') : '',
-            unit_id:     td.unit_id || '',
-            pool:        td.pool || '',
-            used:        Number(td.used),
-            total_space: Number(td.total_space),
-            perc_used:   Number(td.perc_used),
-            snap:        Number(td.snap),
-            perc_snap:   Number(td.perc_snap),
-            hostid:      td.hostid || ''
-          });
-        });
-        allTelemetryData = allTelemetryData
-          .filter((t) => t.perc_used >= 0 && t.perc_used <= 100)
-          .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
-
-        // 4. FETCH capacity_trends_dataset (sub‐level)
-        const dsQ    = query(collection(firestore, 'capacity_trends_dataset'), where('hostid', 'in', uniqueHostids));
-        const dsSnap = await getDocs(dsQ);
-        let allDatasetTelemetry: TelemetryData[] = [];
-        dsSnap.forEach((doc) => {
-          const td = doc.data();
-          allDatasetTelemetry.push({
-            date:        td.date ? td.date.replace(' ', 'T') : '',
-            unit_id:     td.unit_id || '',
-            pool:        td.pool || '',
-            used:        Number(td.used),
-            total_space: Number(td.total_space),
-            perc_used:   Number(td.perc_used),
-            snap:        Number(td.snap),
-            perc_snap:   Number(td.perc_snap),
-            hostid:      td.hostid || ''
-          });
-        });
-        allDatasetTelemetry = allDatasetTelemetry
-          .filter((t) => t.perc_used >= 0 && t.perc_used <= 100)
-          .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
-
-        // 5. FETCH usage_forecast
-        const foreQ    = query(collection(firestore, 'usage_forecast'), where('hostid', 'in', uniqueHostids));
-        const foreSnap = await getDocs(foreQ);
-        let allForecastData: ForecastPoint[] = [];
-        foreSnap.forEach((doc) => {
-          const fd = doc.data();
-          allForecastData.push({
-            date:                  fd.date ? fd.date.replace(' ', 'T') : '',
-            unit_id:               fd.unit_id || '',
-            pool:                  fd.pool || '',
-            forecasted_usage:      Number(fd.forecasted_usage),
-            forecasted_percentage: Number(fd.forecasted_percentage),
-            hostid:                fd.hostid || ''
-          });
-        });
-        allForecastData.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
-
-        // 6. POPOLA CACHE
-        unitCache[unitId] = {
-          allSystemRecords:   loadedRecords,
-          allTelemetry:       allTelemetryData,
-          allDatasetTelemetry,   // <— aggiunto
-          allForecast:        allForecastData,
-          timestamp:          now
-        };
-
-        // 7. SET STATE iniziale
-        setAllRecords(loadedRecords);
-        const allPools = Array.from(new Set(loadedRecords.map((r) => r.pool)));
-        setPoolList(allPools);
+        // pool di default = quella con last_date più recente
         let defaultPool: string | null = null;
-        let maxT2 = 0;
-        for (const rec of loadedRecords) {
+        let maxTime = 0;
+        for (const rec of cached.allSystemRecords) {
           const t = new Date(rec.last_date).getTime();
-          if (t > maxT2) {
-            maxT2 = t;
+          if (t > maxTime) {
+            maxTime = t;
             defaultPool = rec.pool;
           }
         }
         setSelectedPool(defaultPool);
-      } catch (err) {
-        console.error(err);
-        setError('Failed to load system data');
-      } finally {
         setIsLoading(false);
+        return;
       }
-    })();
-  }, [unitId, user]);
 
+      /* ───────── 1. FETCH system_data ───────── */
+      const sysSnap = await getDocs(
+        query(collection(firestore, 'system_data'), where('unit_id', '==', unitId))
+      );
+      if (sysSnap.empty) {
+        setError(`No system records found for unit_id=${unitId}`);
+        setIsLoading(false);
+        return;
+      }
 
-  useEffect(() => {
-    if (!poolList.length) return;
-    const lvl0 = Array.from(new Set(poolList.map(p => p.split('/')[0])));
-    setSegmentOptions([lvl0]);
-    setSelectedSegments([]);
-  }, [poolList]);
+      const loadedRecords: SystemData[] = [];
+      sysSnap.forEach(doc => {
+        const d = doc.data();
+        loadedRecords.push({
+          name: d.name || '',
+          hostid: d.hostid || '',
+          pool: d.pool || '',
+          unit_id: d.unit_id || '',
+          type: d.type || '',
+          used: Number(d.used),
+          avail: Number(d.avail),
+          used_snap: Number(d.used_snap),
+          perc_used: Number(d.perc_used),
+          perc_snap: Number(d.perc_snap),
+          sending_telemetry: String(d.sending_telemetry).toLowerCase() === 'true',
+          first_date: d.first_date ? d.first_date.replace(' ', 'T') : '',
+          last_date:  d.last_date  ? d.last_date.replace(' ', 'T')  : '',
+          MUP: d.MUP == null ? 55 : Number(d.MUP),
+          avg_speed: Number(d.avg_speed),
+          avg_time:  Number(d.avg_time),
+          company:   d.company || ''
+        });
+      });
 
-  useEffect(() => {
-    const lvl = selectedSegments.length;
-    if (lvl === 0) return;
+      if (!loadedRecords.length) {
+        setError('No valid system records found');
+        setIsLoading(false);
+        return;
+      }
 
-    const filtered = poolList.filter(p => {
-      const parts = p.split('/');
-      return selectedSegments.every((seg, i) => parts[i] === seg);
-    });
+      /* ───────── 2. PREP hostid unici ───────── */
+      const uniqueHostids = Array.from(new Set(loadedRecords.map(r => r.hostid)));
 
-    // next options
-    const nextOpts = Array.from(new Set(
-      filtered.map(p => p.split('/')[lvl]).filter(x => !!x)
-    ));
+      /* ───────── 3. FETCH capacity_trends ───────── */
+      const telemSnap = await getDocs(
+        query(collection(firestore, 'capacity_trends'), where('hostid', 'in', uniqueHostids))
+      );
+      let allTelemetryData: TelemetryData[] = [];
+      telemSnap.forEach(doc => {
+        const td = doc.data();
+        allTelemetryData.push({
+          date:        td.date ? td.date.replace(' ', 'T') : '',
+          unit_id:     td.unit_id || '',
+          pool:        td.pool || '',
+          used:        Number(td.used),
+          total_space: Number(td.total_space),
+          perc_used:   Number(td.perc_used),
+          snap:        Number(td.snap),
+          perc_snap:   Number(td.perc_snap),
+          hostid:      td.hostid || ''
+        });
+      });
+      allTelemetryData = allTelemetryData
+        .filter(t => t.perc_used >= 0 && t.perc_used <= 100)
+        .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
 
-    setSegmentOptions(prev => {
-      const copy = prev.slice(0, lvl);
-      if (nextOpts.length) copy.push(nextOpts);
-      return copy;
-    });
+      /* ───────── 4. FETCH capacity_trends_dataset ───────── */
+      const dsSnap = await getDocs(
+        query(collection(firestore, 'capacity_trends_dataset'), where('hostid', 'in', uniqueHostids))
+      );
+      let allDatasetTelemetry: TelemetryData[] = [];
+      dsSnap.forEach(doc => {
+        const td = doc.data();
+        allDatasetTelemetry.push({
+          date:        td.date ? td.date.replace(' ', 'T') : '',
+          unit_id:     td.unit_id || '',
+          pool:        td.pool || '',
+          used:        Number(td.used),
+          total_space: Number(td.total_space),
+          perc_used:   Number(td.perc_used),
+          snap:        Number(td.snap),
+          perc_snap:   Number(td.perc_snap),
+          hostid:      td.hostid || ''
+        });
+      });
+      allDatasetTelemetry = allDatasetTelemetry
+        .filter(t => t.perc_used >= 0 && t.perc_used <= 100)
+        .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
 
-  }, [selectedSegments, poolList]);
+      /* ───────── 5. FETCH usage_forecast ───────── */
+      const foreSnap = await getDocs(
+        query(collection(firestore, 'usage_forecast'), where('hostid', 'in', uniqueHostids))
+      );
+      let allForecastData: ForecastPoint[] = [];
+      foreSnap.forEach(doc => {
+        const fd = doc.data();
+        allForecastData.push({
+          date:                  fd.date ? fd.date.replace(' ', 'T') : '',
+          unit_id:               fd.unit_id || '',
+          pool:                  fd.pool || '',
+          forecasted_usage:      Number(fd.forecasted_usage),
+          forecasted_percentage: Number(fd.forecasted_percentage),
+          hostid:                fd.hostid || ''
+        });
+      });
+      allForecastData.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+
+      /* ───────── 6. POPOLA CACHE ───────── */
+      unitCache[unitId] = {
+        allSystemRecords:   loadedRecords,
+        allTelemetry:       allTelemetryData,
+        allDatasetTelemetry,
+        allForecast:        allForecastData,
+        timestamp:          now
+      };
+
+      /* ───────── 7. SET STATE iniziale ───────── */
+      setAllRecords(loadedRecords);
+      const pools = Array.from(new Set(loadedRecords.map(r => r.pool)));
+      setPoolList(pools);
+
+      let defaultPool: string | null = null;
+      let maxT = 0;
+      for (const rec of loadedRecords) {
+        const t = new Date(rec.last_date).getTime();
+        if (t > maxT) {
+          maxT = t;
+          defaultPool = rec.pool;
+        }
+      }
+      setSelectedPool(defaultPool);
+    } catch (err) {
+      console.error(err);
+      setError('Failed to load system data');
+    } finally {
+      setIsLoading(false);
+    }
+  })();
+}, [unitId, user]);
+
+/* ────────────────────────────────────────────────
+   Gestione segmenti per il breadcrumb / dataset
+   ──────────────────────────────────────────────── */
+useEffect(() => {
+  if (!poolList.length) return;
+  const lvl0 = Array.from(new Set(poolList.map(p => p.split('/')[0])));
+  setSegmentOptions([lvl0]);
+  setSelectedSegments([]);
+}, [poolList]);
+
+useEffect(() => {
+  const lvl = selectedSegments.length;
+  if (lvl === 0) return;
+
+  const filtered = poolList.filter(p => {
+    const parts = p.split('/');
+    return selectedSegments.every((seg, i) => parts[i] === seg);
+  });
+
+  const nextOpts = Array.from(
+    new Set(filtered.map(p => p.split('/')[lvl]).filter(Boolean))
+  );
+
+  setSegmentOptions(prev => {
+    const copy = prev.slice(0, lvl);
+    if (nextOpts.length) copy.push(nextOpts);
+    return copy;
+  });
+}, [selectedSegments, poolList]);
 
 
   // =============== 2) Al cambio pool, scelgo l'hostid più recente per quella pool ===============
@@ -569,7 +591,7 @@ function SystemDetail() {
             unit: '%',
             status: capacityScore < 50 ? 'critical' : capacityScore < 70 ? 'warning' : 'good',
             message: `${(currentSystem.used / 1024).toFixed(2)} TB used of ${(((currentSystem.used + currentSystem.avail) / 1024).toFixed(2))} TB total`,
-            impact: 'N/A',
+            impact: '',
             weight: 40,
             icon: Database
           },
@@ -580,7 +602,7 @@ function SystemDetail() {
             unit: '',
             status: performanceScore < 50 ? 'critical' : performanceScore < 60 ? 'warning' : 'good',
             message: `Avg time: ${currentSystem.avg_time.toFixed(1)} min`,
-            impact: 'N/A',
+            impact: '',
             weight: 20,
             icon: Zap
           },
@@ -591,7 +613,7 @@ function SystemDetail() {
             unit: '',
             status: telemetryScore === 100 ? 'good' : 'critical',
             message: currentSystem.sending_telemetry ? 'System is sending telemetry' : 'No telemetry',
-            impact: 'N/A',
+            impact: '',
             weight: 15,
             icon: Signal
           },
@@ -604,7 +626,7 @@ function SystemDetail() {
             message: currentSystem.used_snap > 0
               ? `${currentSystem.used_snap.toFixed(2)} GB used for snapshots`
               : 'No snapshots found',
-            impact: 'N/A',
+            impact: '',
             weight: 10,
             icon: Camera
           },
@@ -615,7 +637,7 @@ function SystemDetail() {
             unit: 'TB',
             status: mupScore < 50 ? 'critical' : mupScore < 60 ? 'warning' : 'good',
             message: 'Resource usage patterns',
-            impact: 'N/A',
+            impact: '',
             weight: 15,
             icon: BarChart
           },
@@ -626,7 +648,7 @@ function SystemDetail() {
             unit: '',
             status: utilizationScore < 50 ? 'critical' : utilizationScore < 70 ? 'warning' : 'good',
             message: 'Avg of Capacity & Snapshots Score',
-            impact: 'N/A',
+            impact: '',
             weight: 0,
             icon: Gauge
           }
@@ -685,6 +707,7 @@ function SystemDetail() {
     if (range === 'all') return data;
     const now = new Date();
     const rangeMap: Record<string, number> = {
+      '1w': 7,
       '1m': 30,
       '3m': 90,
       '6m': 180,
@@ -1090,7 +1113,7 @@ function SystemDetail() {
             <option value="" disabled>
               {selectedSegments.length > 0
                 ? selectedSegments[selectedSegments.length - 1]
-                : 'Seleziona pool'}
+                : 'Select dataset'}
             </option>
             {segmentOptions[selectedSegments.length]?.map(opt => (
               <option key={opt} value={opt}>
@@ -1321,7 +1344,16 @@ function SystemDetail() {
           </div>
         </div>
       </div>
-
+      {/* CHART – File Trends */}
+      {fileTrendsEnabled && (
+        <div className="bg-[#0b3c43] rounded-lg p-6 shadow-lg border border-[#22c1d4]/10">
+          <div className="flex items-center gap-2 mb-6">
+            <Files className="w-6 h-6 text-[#22c1d4]" />
+            <h2 className="text-xl text-[#eeeeee] font-semibold">File Trends</h2>
+          </div>
+          <FileTrendsChart hostId={systemData.hostid} pool={systemData.pool} />
+        </div>
+      )}
       {/* CHART - UsageForecast */}
       {chartForeCan || chartForeBlur ? (
         <div className="relative bg-[#0b3c43] rounded-lg p-6 shadow-lg border border-[#22c1d4]/10">

@@ -8,6 +8,7 @@ export interface User {
   company: string;
   email?: string;
   createdAt: string;
+  features?: Record<string, boolean>;  
   updatedAt: string;
 
   // Subscription-based

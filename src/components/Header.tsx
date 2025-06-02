@@ -98,7 +98,6 @@ export default function Header(props: HeaderProps) {
             className="flex items-center gap-2 cursor-pointer hover:text-[#22c1d4]"
             onClick={() => setShowUserMenu(!showUserMenu)}
           >
-            {renderSubscriptionIcon()}
             <User className="w-5 h-5" />
           </div>
           {showUserMenu && (
