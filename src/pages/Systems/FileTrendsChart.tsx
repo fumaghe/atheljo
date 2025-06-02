@@ -97,7 +97,7 @@ export default function FileTrendsChart({
     );
   if (!filtered.length)
     return (
-      <div className="h-[300px] flex items-center justify-center">No data</div>
+      <div className="h-[20px] flex items-center justify-center">No data</div>
     );
 
   /* ─────────────────────────── datasets ────────────────────────────── */

@@ -1,6 +1,6 @@
 // src/pages/Settings/index.tsx
 import React, { useState, useEffect } from 'react';
-import { Shield, Zap, Bell, Database, Files } from 'lucide-react';
+import { Shield, Leaf, Bell, Database, Files } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 
 /* ───────────────────────────────── FEATURE TOGGLES ────────────────────────── */
@@ -25,10 +25,10 @@ const featureToggles = [
   },
   {
     id: 'energy',
-    name: 'Energy Consumption Analysis',
-    description: 'Track and analyze energy usage patterns',
-    icon: Zap,
-    comingSoon: true
+    name: 'Energy Consumption & CO₂ Impact',
+    description: 'Track daily kWh and related emissions',
+    icon: Leaf,               
+    comingSoon: false            
   },
   {
     id: 'notifications',

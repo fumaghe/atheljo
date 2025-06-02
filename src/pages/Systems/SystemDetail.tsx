@@ -22,6 +22,7 @@ import {
   Wrench,
   Lock,
   Server,
+  Leaf,
   AlertTriangle
 } from 'lucide-react';
 import firestore from '../../firebaseClient';
@@ -32,6 +33,7 @@ import StateVectorChart from './StateVectorChart';
 import LoadingDots from '../Dashboard/components/LoadingDots';
 import { calculateSystemHealthScore } from '../../utils/calculateSystemHealthScore';
 import FileTrendsChart from './FileTrendsChart';
+import EnergyConsumptionImpact from './EnergyConsumptionImpact';
 
 // Registra Chart.js e il plugin per le annotazioni
 Chart.register(...registerables, annotationPlugin);
@@ -243,6 +245,9 @@ function SystemDetail() {
 
   const fileTrendsEnabled =
     user?.features && user.features['file-trends'] === true;
+
+  const energyEnabled =
+    user?.features && user.features['energy'] === true;
 
   // Permessi e blur
   const { canAccess: capCan, shouldBlur: capBlur } = useSubscriptionPermissions('SystemDetail', 'Health - Capacity');
@@ -1344,6 +1349,15 @@ useEffect(() => {
           </div>
         </div>
       </div>
+      {/* CHART – Energy & CO₂ */}
+        {energyEnabled && (
+          <div className="bg-[#0b3c43] rounded-lg p-6 shadow-lg border border-[#22c1d4]/10">
+            <EnergyConsumptionImpact
+              hostId={systemData!.hostid}
+              pool={systemData!.pool}
+            />
+          </div>
+        )}
       {/* CHART – File Trends */}
       {fileTrendsEnabled && (
         <div className="bg-[#0b3c43] rounded-lg p-6 shadow-lg border border-[#22c1d4]/10">
@@ -1354,6 +1368,7 @@ useEffect(() => {
           <FileTrendsChart hostId={systemData.hostid} pool={systemData.pool} />
         </div>
       )}
+
       {/* CHART - UsageForecast */}
       {chartForeCan || chartForeBlur ? (
         <div className="relative bg-[#0b3c43] rounded-lg p-6 shadow-lg border border-[#22c1d4]/10">
