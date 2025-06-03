@@ -218,20 +218,6 @@ export default function EnergyConsumptionImpact({
         <Line data={chartData} options={chartOptions} />
       </div>
 
-      {/* ——— FOOTER CTA ——— */}
-      <div className="flex items-center gap-3 bg-[#06272b] rounded px-4 py-3">
-        <AlertTriangle className="w-5 h-5" style={{ color: '#FBBF24' }} aria-label="Suggerimento ottimizzazione" />
-        <span className="text-sm text-[#F3F4F6]/90">
-          Consider reducing the energy consumption to reduce emissions!
-        </span>
-        <a
-          href="/docs/energy-optimisation"
-          className="ml-auto text-sm font-medium"
-          style={{ color: '#38BDF8' }}
-        >
-          Discover how to optimize emissions
-        </a>
-      </div>
     </div>
   );
 }
