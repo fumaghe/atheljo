@@ -6,18 +6,19 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { collection, query, where, getDocs } from 'firebase/firestore';
 import { Line } from 'react-chartjs-2';
 import { subDays } from 'date-fns';
-import { Zap, Cloud, Leaf, AlertTriangle } from 'lucide-react';
+import { Zap, Cloud, Leaf } from 'lucide-react';
 import firestore from '../../firebaseClient';
 
 /* ─────────────────── tipizzazioni ─────────────────── */
 interface EnergySample {
-  date: string;          // ISO  YYYY-MM-DD
+  date: string;          // ISO YYYY-MM-DD
   hostid: string;
   pool: string;
   unit_id?: string;
-  kwh_consumed: number;
-  co2_emissions: number; // se assente si calcola in fetch
+  kwh_consumed: number;  // valore in kWh
+  co2_emissions: number; // valore in kg CO₂
 }
+
 type Range = '1w' | '1m' | '3m' | '1y' | 'all';
 const rangeMap: Record<Exclude<Range, 'all'>, number> = {
   '1w': 7,
@@ -25,9 +26,10 @@ const rangeMap: Record<Exclude<Range, 'all'>, number> = {
   '3m': 90,
   '1y': 365
 };
+
 const EMISSION_FACTOR = 0.32; // kg CO₂ per kWh
-const KWH_THRESHOLD   = 300;  // soglia alert consumo medio
-const CO2_THRESHOLD   = 100;  // soglia alert emissioni medie
+const KWH_THRESHOLD   = 300;  // soglia alert consumo medio (in kWh)
+const CO2_THRESHOLD   = 100;  // soglia alert emissioni medie (in kg CO₂)
 
 /* ─────────────────── componente principale ─────────────────── */
 export default function EnergyConsumptionImpact({
@@ -45,6 +47,7 @@ export default function EnergyConsumptionImpact({
   useEffect(() => {
     (async () => {
       setIsLoading(true);
+
       const q = query(
         collection(firestore, 'energy_trends'),
         where('hostid', '==', hostId),
@@ -52,20 +55,30 @@ export default function EnergyConsumptionImpact({
       );
       const snap = await getDocs(q);
       const loaded: EnergySample[] = [];
+
       snap.forEach(d => {
         const data = d.data();
+
+        // Il campo data.kwh_consumed è in Wh: lo convertiamo in kWh
+        const whRaw = Number(data.kwh_consumed);   // valore in Wh (ad es. 270 ... 900 Wh)
+        const kwh   = whRaw / 1000;                // ora è in kWh (0.27 ... 0.9 kWh)
+
+        // Calcoliamo sempre le emissioni a partire dal kWh corretto
+        const co2 = +((kwh * EMISSION_FACTOR).toFixed(3)); // in kg CO₂
+
         loaded.push({
           date: data.date,
           hostid: data.hostid,
           pool: data.pool,
           unit_id: data.unit_id,
-          kwh_consumed: Number(data.kwh_consumed),
-          co2_emissions: data.co2_emissions != null
-            ? Number(data.co2_emissions)
-            : Number(data.kwh_consumed) * EMISSION_FACTOR
+          kwh_consumed: +kwh.toFixed(3),
+          co2_emissions: co2
         });
       });
-      loaded.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+
+      loaded.sort(
+        (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()
+      );
       setSamples(loaded);
       setIsLoading(false);
     })();
@@ -80,11 +93,11 @@ export default function EnergyConsumptionImpact({
 
   /* ───── metriche chiave ───── */
   const daysCount = filtered.length;
-  const sumKwh    = filtered.reduce((a, s) => a + s.kwh_consumed, 0);
+  const sumKwh    = filtered.reduce((acc, s) => acc + s.kwh_consumed, 0);
   const avgKwh    = daysCount ? +(sumKwh / daysCount).toFixed(1) : 0;
   const avgCo2    = +(avgKwh * EMISSION_FACTOR).toFixed(1);
 
-  /* ───── grafico ───── */
+  /* ───── configurazione grafico ───── */
   const chartData = {
     datasets: [
       {
@@ -159,6 +172,7 @@ export default function EnergyConsumptionImpact({
       </div>
     );
   }
+
   if (!filtered.length) {
     return (
       <div className="h-[20px] flex items-center justify-center">
@@ -217,7 +231,6 @@ export default function EnergyConsumptionImpact({
       <div className="h-[300px]">
         <Line data={chartData} options={chartOptions} />
       </div>
-
     </div>
   );
 }
