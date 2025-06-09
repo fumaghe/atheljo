@@ -42,6 +42,7 @@ export default function Dashboard() {
   const [usedUnit, setUsedUnit] = useState<'GB' | 'GiB' | 'TB' | '%'>('TB');
   const [snapUnit, setSnapUnit] = useState<'GB' | 'GiB' | 'TB' | '%'>('TB');
 
+  
   // Subscription permissions
   const filtersSubscription   = useSubscriptionPermissions('Dashboard', 'Filters');
   const alertsSubscription    = useSubscriptionPermissions('Dashboard', 'Alerts Card');
