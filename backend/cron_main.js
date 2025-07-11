@@ -6,7 +6,7 @@ import { subMonths } from 'date-fns';
 import fs from 'fs';
 import firestore from './firebase.js';
 
-// Imposta __filename e __dirname per i moduli ES
+// Imposta __filename e __dirname per i moduli 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 

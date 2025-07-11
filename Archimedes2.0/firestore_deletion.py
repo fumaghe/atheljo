@@ -16,6 +16,7 @@ Utilizzo:
     python firestore_capacity_trends_cleanup.py
 """
 
+
 import os
 import logging
 import argparse
