@@ -1,684 +1,224 @@
-import { useState, useEffect, useMemo } from 'react'
-import { Database, TrendingUp, TrendingDown, Users, Activity, BarChart2 } from 'lucide-react'
+import { useEffect, useMemo, useState } from 'react'
+import { Database, Users, Activity, BarChart2 } from 'lucide-react'
 import {
-  collection,
-  getDocs,
-  query,
-  where,
-  orderBy,
-  limit,
-  onSnapshot,
-  startAfter,
-  QueryDocumentSnapshot
-} from 'firebase/firestore'
-import firestore from '../../../firebaseClient'
-import { format, subDays } from 'date-fns'
-import {
-  CapacityData,
-  SystemData,
-  TelemetryData,
   AggregatedStats,
-  FilterSelections,
+  BusinessMetric,
+  CapacityData,
   FilterOptions,
-  BusinessMetric
+  FilterSelections,
+  SystemData
 } from '../types'
-import { calculateSystemHealthScore } from '../../../utils/calculateSystemHealthScore'
 
-/**
- * Chunk array utility
- */
-function chunkArray<T>(array: T[], size: number): T[][] {
-  const result: T[][] = []
-  for (let i = 0; i < array.length; i += size) {
-    result.push(array.slice(i, i + size))
+const dummySystems: SystemData[] = [
+  {
+    unit_id: 'SYS-001',
+    name: 'Aire Core',
+    hostid: 'host-01',
+    pool: 'pool-a',
+    type: 'AiRE 3',
+    used: 520,
+    avail: 480,
+    used_snap: 120,
+    perc_used: 52,
+    perc_snap: 12,
+    sending_telemetry: true,
+    first_date: '2024-01-01',
+    last_date: '2024-05-01',
+    MUP: 0,
+    avg_speed: 220,
+    avg_time: 35,
+    company: 'Acme'
+  },
+  {
+    unit_id: 'SYS-002',
+    name: 'Edge Vault',
+    hostid: 'host-02',
+    pool: 'pool-b',
+    type: 'AiRE 4',
+    used: 780,
+    avail: 220,
+    used_snap: 210,
+    perc_used: 78,
+    perc_snap: 21,
+    sending_telemetry: false,
+    first_date: '2024-02-10',
+    last_date: '2024-05-12',
+    MUP: 0,
+    avg_speed: 180,
+    avg_time: 50,
+    company: 'Globex'
+  },
+  {
+    unit_id: 'SYS-003',
+    name: 'SmartCARE Node',
+    hostid: 'host-03',
+    pool: 'pool-a',
+    type: 'SmartCARE',
+    used: 430,
+    avail: 570,
+    used_snap: 95,
+    perc_used: 43,
+    perc_snap: 9,
+    sending_telemetry: true,
+    first_date: '2024-03-05',
+    last_date: '2024-05-20',
+    MUP: 0,
+    avg_speed: 240,
+    avg_time: 25,
+    company: 'Acme'
   }
-  return result
-}
+]
 
-/**
- * Filter systems by user role & filter selections, returning an array of `unit_id`.
- */
-function getFilteredUnitIds(
-  aggregatedSystems: SystemData[],
-  user: any,
-  filters: FilterSelections
-): string[] {
-  const { company, type, pool, telemetry } = filters;
+const dummyCapacity: CapacityData[] = [
+  {
+    date: '2024-05-01',
+    snap: 120,
+    used: 520,
+    perc_used: 52,
+    perc_snap: 12,
+    pool: 'pool-a',
+    hostid: 'host-01',
+    unit_id: 'SYS-001',
+    total_space: 1000
+  },
+  {
+    date: '2024-05-12',
+    snap: 210,
+    used: 780,
+    perc_used: 78,
+    perc_snap: 21,
+    pool: 'pool-b',
+    hostid: 'host-02',
+    unit_id: 'SYS-002',
+    total_space: 1000
+  },
+  {
+    date: '2024-05-20',
+    snap: 95,
+    used: 430,
+    perc_used: 43,
+    perc_snap: 9,
+    pool: 'pool-a',
+    hostid: 'host-03',
+    unit_id: 'SYS-003',
+    total_space: 1000
+  }
+]
 
-  return aggregatedSystems
-    .filter((s) => {
-      // 1) visibilità per admin_employee
-      if (user?.role === 'admin_employee') {
-        const visible = user.visibleCompanies || [];
-        if (visible.length > 0 && !visible.includes(s.company)) {
-          return false;
-        }
-      }
-      // 2) employee e customer vedono solo la loro company
-      else if (
-        (user?.role === 'employee' || user?.role === 'customer') &&
-        s.company !== user.company
-      ) {
-        return false;
-      }
-      // 3) admin + filtro esplicito
-      if (user?.role === 'admin' && company !== 'all' && s.company !== company) {
-        return false;
-      }
-
-      // 4) altri filtri (type, pool, telemetry)
-      if (type !== 'all' && s.type !== type) return false;
-      if (pool !== 'all' && s.pool !== pool) return false;
-      if (telemetry !== 'all') {
-        const shouldBeActive = telemetry === 'active';
-        if (s.sending_telemetry !== shouldBeActive) return false;
-      }
-      return true;
-    })
-    .map((s) => s.unit_id);
-}
-
-/**
- * We will:
- *  1) group system_data by (unit_id -> pool), picking the newest doc if multiple
- *  2) from those aggregated docs, gather unique hostids
- *  3) fetch capacity_trends by those hostids, then match them by (hostid + pool)
- */
 export function useDashboardData(user: any) {
-  const [progress, setProgress] = useState<number>(0)
-
-  // =============== FILTERS ===============
-  const initialFilters: FilterSelections = {
+  const [filters, setFilters] = useState<FilterSelections>({
     company: 'all',
     type: 'all',
     pool: 'all',
     telemetry: 'all',
     timeRange: '30'
-  }
-  const [filters, setFilters] = useState<FilterSelections>(initialFilters)
-
-  // =============== RAW SYSTEM DOCS (for dynamic filter lists) ===============
-  const [rawSystemsDocs, setRawSystemsDocs] = useState<SystemData[]>([])
-
-  // Final aggregated systems we’ll show
-  const [systemsData, setSystemsData] = useState<SystemData[]>([])
+  })
   const [isLoading, setIsLoading] = useState<boolean>(true)
 
-  // capacityTrends data
-  const [capacityData, setCapacityData] = useState<CapacityData[]>([])
-
-  // =============== 1) onSnapshot for system_data (for filter dropdowns) ===============
   useEffect(() => {
-    const systemsCollection = collection(firestore, 'system_data')
-    const unsubscribe = onSnapshot(systemsCollection, (snapshot) => {
-      const docs = snapshot.docs
-        .map((doc) => {
-          const data = doc.data()
-          return {
-            ...data,
-            sending_telemetry:
-              String(data.sending_telemetry).toLowerCase() === 'true'
-          } as SystemData
-        })
-        // filtro fuori tutte le pool che contengono "/" (i dataset)
-        .filter((s) => !s.pool.includes('/'))
-      setRawSystemsDocs(docs)
-    })
-    return () => unsubscribe()
+    const timer = setTimeout(() => setIsLoading(false), 300)
+    return () => clearTimeout(timer)
   }, [])
 
-  // =============== 2) Build dynamic filter options ===============
   const filterOptions = useMemo<FilterOptions>(() => {
-    const days = parseInt(filters.timeRange);
-    const cutoffDate = subDays(new Date(), days);
+    const companies = Array.from(new Set(dummySystems.map((s) => s.company)))
+    const types = Array.from(new Set(dummySystems.map((s) => s.type)))
+    const pools = Array.from(new Set(dummySystems.map((s) => s.pool)))
 
-    // raw → allowed by role + date
-    const allowedDocs = rawSystemsDocs.filter((s) => {
-      if (user?.role === 'admin_employee') {
-        const visible = user.visibleCompanies || [];
-        if (visible.length > 0 && !visible.includes(s.company)) return false;
-      }
-      // employee e customer vedono solo la loro company
-      else if (
-        (user?.role === 'employee' || user?.role === 'customer') &&
-        s.company !== user.company
-      ) {
-        return false;
-      }
-      if (new Date(s.last_date) < cutoffDate) return false;
-      return true;
-    });
-
-    // build companies
-    let companies: string[] = [];
-    if (user?.role === 'admin_employee') {
-      const visible = user.visibleCompanies || [];
-      companies = visible.length > 0 ? ['all', ...visible] : ['all'];
+    return {
+      companies: ['all', ...companies],
+      types: ['all', ...types],
+      pools: ['all', ...pools]
     }
-    else if (user?.role === 'employee' || user?.role === 'customer') {
-      companies = [user.company];
-    }
-    else {
-      const discovered = Array.from(new Set(allowedDocs.map((s) => s.company)));
-      companies = ['all', ...discovered];
-    }
+  }, [])
 
-    // build types & pools as before
-    const discoveredTypes = Array.from(new Set(allowedDocs.map((s) => s.type)));
-    const types = ['all', ...discoveredTypes];
-    const discoveredPools = Array.from(new Set(allowedDocs.map((s) => s.pool)));
-    const pools = ['all', ...discoveredPools];
-
-    return { companies, types, pools };
-  }, [rawSystemsDocs, filters.timeRange, user]);
-
-  // if user is not admin, force filters.company to the user’s single company
-  useEffect(() => {
-    if (!user) return
-
-    if (user.role === 'admin_employee') {
-      const visible = user.visibleCompanies || []
-      if (visible.length === 1 && filters.company === 'all') {
-        setFilters((prev) => ({ ...prev, company: visible[0] }))
-      }
-    } else if (user.role !== 'admin') {
-      if (filters.company === 'all') {
-        setFilters((prev) => ({ ...prev, company: user.company }))
-      }
-    }
-  }, [user, filters.company])
-
-  // =============== 3) Progressive load of system_data docs w/ role & filter constraints ===============
-  useEffect(() => {
-    async function fetchAllSystemsProgressively() {
-      setIsLoading(true)
-      const pageSize = 1000
-      const queryConstraints: any[] = []
-  
-      // role-based constraints
-      if (user?.role === 'admin_employee') {
-        const visibleCompanies = user.visibleCompanies || []
-        if (visibleCompanies.length === 1) {
-          queryConstraints.push(where('company', '==', visibleCompanies[0]))
-        } else if (
-          visibleCompanies.length > 1 &&
-          visibleCompanies.length <= 10
-        ) {
-          queryConstraints.push(where('company', 'in', visibleCompanies))
-        }
-      } else if (user?.role === 'employee') {
-        queryConstraints.push(where('company', '==', user.company))
-      } else if (user?.role === 'admin') {
-        if (filters.company !== 'all') {
-          queryConstraints.push(where('company', '==', filters.company))
-        }
-      }
-  
-      // additional filter constraints
-      if (filters.type !== 'all') {
-        queryConstraints.push(where('type', '==', filters.type))
-      }
-      if (filters.pool !== 'all') {
-        queryConstraints.push(where('pool', '==', filters.pool))
-      }
+  const filteredSystems = useMemo(() => {
+    return dummySystems.filter((system) => {
+      if (filters.company !== 'all' && system.company !== filters.company) return false
+      if (filters.type !== 'all' && system.type !== filters.type) return false
+      if (filters.pool !== 'all' && system.pool !== filters.pool) return false
       if (filters.telemetry !== 'all') {
         const shouldBeActive = filters.telemetry === 'active'
-        queryConstraints.push(
-          where('sending_telemetry', '==', shouldBeActive)
-        )
+        if (system.sending_telemetry !== shouldBeActive) return false
       }
-  
-      // always order by last_date desc
-      const validConstraints = queryConstraints.filter(Boolean)
-      let lastDoc: QueryDocumentSnapshot | null = null
-      let allRaw: SystemData[] = []
-      let fetchedAll = false
-  
-      while (!fetchedAll) {
-        const constraints = [
-          ...validConstraints,
-          orderBy('last_date', 'desc'),
-          limit(pageSize)
-        ]
-        if (lastDoc) {
-          constraints.push(startAfter(lastDoc))
-        }
-  
-        const qSys = query(
-          collection(firestore, 'system_data'),
-          ...constraints
-        )
-        const snap = await getDocs(qSys)
-        const newDocs = snap.docs.map((doc) => {
-          const d = doc.data()
-          return {
-            ...d,
-            sending_telemetry:
-              String(d.sending_telemetry).toLowerCase() === 'true'
-          } as SystemData
-        })
-  
-        // role-based client filtering for admin_employee
-        if (user?.role === 'admin_employee') {
-          const visibleCompanies = user.visibleCompanies || []
-          if (visibleCompanies.length > 10) {
-            newDocs.forEach((sys) => {
-              if (visibleCompanies.includes(sys.company)) {
-                allRaw.push(sys)
-              }
-            })
-          } else {
-            allRaw = [...allRaw, ...newDocs]
-          }
-        } else {
-          allRaw = [...allRaw, ...newDocs]
-        }
-  
-        if (snap.docs.length < pageSize) {
-          fetchedAll = true
-        } else {
-          lastDoc = snap.docs[snap.docs.length - 1]
-        }
+      if (user?.role === 'employee' || user?.role === 'customer') {
+        return system.company === user.company
       }
-  
-      // filtriamo fuori i dataset (pool con "/")
-      allRaw = allRaw.filter((sys) => !sys.pool.includes('/'))
-  
-      // raggruppiamo per unit_id → pool, prendendo l'ultima versione
-      const days = parseInt(filters.timeRange)
-      const cutoff = subDays(new Date(), days)
-      const unitGroups: Record<string, Record<string, SystemData>> = {}
-  
-      for (const sys of allRaw) {
-        if (!unitGroups[sys.unit_id]) {
-          unitGroups[sys.unit_id] = {}
-        }
-        const existing = unitGroups[sys.unit_id][sys.pool]
-        if (!existing) {
-          unitGroups[sys.unit_id][sys.pool] = sys
-        } else {
-          const currLast = new Date(sys.last_date)
-          const existLast = new Date(existing.last_date)
-          if (currLast > existLast) {
-            unitGroups[sys.unit_id][sys.pool] = sys
-          }
-        }
+      if (user?.role === 'admin_employee') {
+        const visible = user.visibleCompanies || []
+        if (visible.length && !visible.includes(system.company)) return false
       }
-  
-      // costruisco l'array finale
-      const aggregated: SystemData[] = []
-      for (const [, poolMap] of Object.entries(unitGroups)) {
-        const poolRecords = Object.values(poolMap)
-        let valid = poolRecords.filter(
-          (p) => new Date(p.last_date) >= cutoff
-        )
-        if (valid.length === 0) {
-          valid = poolRecords
-        }
-        if (valid.length === 1) {
-          aggregated.push(valid[0])
-        } else {
-          const newest = valid.reduce((prev, curr) =>
-            new Date(prev.last_date) > new Date(curr.last_date)
-              ? prev
-              : curr
-          )
-          aggregated.push(newest)
-        }
-      }
-  
-      setSystemsData(aggregated)
-      setIsLoading(false)
-    }
-  
-    fetchAllSystemsProgressively()
+      return true
+    })
   }, [filters, user])
 
-  // =============== 4) Once we have aggregated systems, fetch capacity data by hostid + pool ===============
-  useEffect(() => {
-    if (systemsData.length === 0) {
-      setCapacityData([])
-      return
-    }
-    // gather unique hostids from the aggregated systems
-    const hostids = new Set<string>()
-    systemsData.forEach((sys) => {
-      if (sys.hostid) {
-        hostids.add(sys.hostid)
-      }
-    })
+  const capacityData = useMemo<CapacityData[]>(() => {
+    const allowedHosts = new Set(filteredSystems.map((s) => `${s.hostid}::${s.pool}`))
+    return dummyCapacity.filter((cap) => allowedHosts.has(`${cap.hostid}::${cap.pool}`))
+  }, [filteredSystems])
 
-    const hostidArr = Array.from(hostids)
-    if (hostidArr.length === 0) {
-      setCapacityData([])
-      return
-    }
+  const aggregatedStats = useMemo<AggregatedStats | null>(() => {
+    if (filteredSystems.length === 0) return null
 
-    const days = parseInt(filters.timeRange)
-    const cutoffDateObj = subDays(new Date(), days)
-    const cutoffDateString = format(cutoffDateObj, 'yyyy-MM-dd HH:mm:ss')
-
-    setCapacityData([]) // reset
-    fetchCapacityTrendsProgressively(hostidArr, cutoffDateString)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [systemsData, filters, user])
-
-  async function fetchCapacityTrendsProgressively(
-    hostidArr: string[],
-    cutoffDateString: string
-  ) {
-    const chunks = chunkArray(hostidArr, 10) // 'in' supports up to 10 elements
-    const concurrencyLimit = 4
-    const totalChunks = chunks.length
-    let processedChunks = 0
-
-    setProgress(0)
-    setCapacityData([])
-
-    for (let i = 0; i < totalChunks; i += concurrencyLimit) {
-      const batchChunks = chunks.slice(i, i + concurrencyLimit)
-
-      await Promise.all(
-        batchChunks.map(async (chunk) => {
-          // Query capacity_trends by hostid array
-          const qCap = query(
-            collection(firestore, 'capacity_trends'),
-            where('hostid', 'in', chunk),
-            where('date', '>=', cutoffDateString),
-            orderBy('date', 'asc')
-          )
-          const snap = await getDocs(qCap)
-
-          const batchResults = snap.docs.map((doc: QueryDocumentSnapshot) => {
-            const data = doc.data()
-            return {
-              date: new Date(data.date).toISOString(),
-              snap: data.snap ?? 0,
-              used: data.used ?? 0,
-              perc_used: data.perc_used ?? 0,
-              perc_snap: data.perc_snap ?? 0,
-              pool: data.pool ?? '',
-              hostid: data.hostid ?? '',
-              total_space: data.total_space ?? 0
-            } as CapacityData
-          })
-
-          setCapacityData((prev) => {
-            const newData = [...prev, ...batchResults]
-            // De-duplicate by (hostid + date + pool) if needed
-            const uniqueMap = new Map<string, CapacityData>()
-            newData.forEach((item) => {
-              // key = hostid + pool + date
-              const key = `${item.hostid}_${item.pool}_${item.date}`
-              uniqueMap.set(key, item)
-            })
-            return Array.from(uniqueMap.values())
-          })
-
-          processedChunks++
-          setProgress(Math.min(100, Math.round((processedChunks / totalChunks) * 100)))
-        })
-      )
-    }
-
-    setProgress(100)
-  }
-
-  // =============== 5) Convert capacityData => telemetryData (unified structure) ===============
-  const computedTelemetryData = useMemo<TelemetryData[]>(() => {
-    return capacityData.map((item) => ({
-      date: item.date,
-      unit_id: '', // your capacity docs don't have correct unit_id, so we'll keep it blank or fill in if you like
-      pool: item.pool,
-      used: item.used,
-      total_space: item.total_space,
-      perc_used: item.perc_used,
-      snap: item.snap,
-      perc_snap: item.perc_snap,
-      hostid: item.hostid
-    }))
-  }, [capacityData])
-
-  // =============== 6) aggregatedStats ===============
-const aggregatedStats = useMemo<AggregatedStats | null>(() => {
-  if (systemsData.length === 0) return null;
-
-  const days = parseInt(filters.timeRange);
-  const cutoffDate = subDays(new Date(), days);
-
-  const filteredSystems = systemsData.filter((s) => {
-    // 1) admin_employee
-    if (user?.role === 'admin_employee') {
-      const visible = user.visibleCompanies || [];
-      if (visible.length > 0 && !visible.includes(s.company)) {
-        return false;
-      }
-    }
-    // 2) admin + filtro esplicito
-    if (
-      user?.role === 'admin' &&
-      filters.company !== 'all' &&
-      s.company !== filters.company
-    ) {
-      return false;
-    }
-    // 3) employee e customer → solo la loro company
-    if (
-      (user?.role === 'employee' || user?.role === 'customer') &&
-      s.company !== user.company
-    ) {
-      return false;
-    }
-    // 4) altri filtri type/pool/telemetry
-    if (filters.type !== 'all' && s.type !== filters.type) return false;
-    if (filters.pool !== 'all' && s.pool !== filters.pool) return false;
-    if (filters.telemetry !== 'all') {
-      const shouldBeActive = filters.telemetry === 'active';
-      if (s.sending_telemetry !== shouldBeActive) return false;
-    }
-    // 5) capacity recenti
-    if (!s.hostid) return false;
-    const hasRecentCap = capacityData.some((c) =>
-      c.hostid === s.hostid &&
-      c.pool === s.pool &&
-      new Date(c.date) >= cutoffDate
-    );
-    return hasRecentCap;
-  });
-
-  if (filteredSystems.length === 0) return null;
     const totalSystems = filteredSystems.length
-    let totalUsed = 0
-    let totalSnapshots = 0
-    let sumPercUsed = 0
-    let sumPercSnap = 0
-    let sumSpeed = 0
-    let sumTime = 0
-    let telemetryActive = 0
-    let sumHealth = 0
+    const totalCapacity = filteredSystems.reduce((sum, sys) => sum + (sys.used + sys.avail), 0)
+    const usedCapacity = filteredSystems.reduce((sum, sys) => sum + sys.used, 0)
+    const usedSnapshots = filteredSystems.reduce((sum, sys) => sum + sys.used_snap, 0)
+    const telemetryActive = filteredSystems.filter((sys) => sys.sending_telemetry).length
 
-    const systemsByType: Record<string, number> = {}
-    const systemsByCompany: Record<string, number> = {}
-    const systemsByPool: Record<string, number> = {}
+    const systemsByType = filteredSystems.reduce<Record<string, number>>((acc, sys) => {
+      acc[sys.type] = (acc[sys.type] || 0) + 1
+      return acc
+    }, {})
 
-    let healthySystems = 0
-    let warningSystems = 0
-    let criticalSystems = 0
-    let totalConfiguredCapacity = 0
+    const systemsByCompany = filteredSystems.reduce<Record<string, number>>((acc, sys) => {
+      acc[sys.company] = (acc[sys.company] || 0) + 1
+      return acc
+    }, {})
 
-    for (const s of filteredSystems) {
-      // find capacity doc with the newest date for this hostid + pool
-      const recs = capacityData.filter((r) => r.hostid === s.hostid && r.pool === s.pool)
-      if (recs.length > 0) {
-        recs.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
-        totalConfiguredCapacity += recs[0].total_space
-      }
+    const systemsByPool = filteredSystems.reduce<Record<string, number>>((acc, sys) => {
+      acc[sys.pool] = (acc[sys.pool] || 0) + 1
+      return acc
+    }, {})
 
-      totalUsed += s.used || 0
-      totalSnapshots += s.used_snap || 0
-      sumPercUsed += s.perc_used || 0
-      sumPercSnap += s.perc_snap || 0
-      sumSpeed += s.avg_speed || 0
-      sumTime += s.avg_time || 0
-
-      if (s.sending_telemetry) telemetryActive++
-
-      const healthScore = calculateSystemHealthScore(s)
-      sumHealth += healthScore
-      if (healthScore >= 80) healthySystems++
-      else if (healthScore >= 50) warningSystems++
-      else criticalSystems++
-
-      systemsByType[s.type] = (systemsByType[s.type] || 0) + 1
-      systemsByCompany[s.company] = (systemsByCompany[s.company] || 0) + 1
-      systemsByPool[s.pool] = (systemsByPool[s.pool] || 0) + 1
-    }
+    const healthySystems = filteredSystems.filter((sys) => sys.perc_used < 70).length
+    const warningSystems = filteredSystems.filter((sys) => sys.perc_used >= 70 && sys.perc_used < 90).length
+    const criticalSystems = filteredSystems.filter((sys) => sys.perc_used >= 90).length
 
     return {
       totalSystems,
-      totalCapacity: totalConfiguredCapacity,
-      usedCapacity: totalUsed,
-      usedSnapshots: totalSnapshots,
-      avgUsage: sumPercUsed / totalSystems,
-      avgSnapUsage: sumPercSnap / totalSystems,
-      avgSpeed: sumSpeed / totalSystems,
-      avgResponseTime: sumTime / totalSystems,
+      totalCapacity,
+      usedCapacity,
+      usedSnapshots,
+      avgUsage: Number((usedCapacity / totalSystems).toFixed(2)),
+      avgSnapUsage: Number((usedSnapshots / totalSystems).toFixed(2)),
+      avgSpeed: Number((filteredSystems.reduce((sum, sys) => sum + sys.avg_speed, 0) / totalSystems).toFixed(2)),
+      avgResponseTime: Number((filteredSystems.reduce((sum, sys) => sum + sys.avg_time, 0) / totalSystems).toFixed(2)),
       telemetryActive,
       systemsByType,
       systemsByCompany,
       systemsByPool,
       healthySystems,
       warningSystems,
-      criticalSystems,
-      avgHealth: totalSystems > 0 ? sumHealth / totalSystems : 0
-    } as AggregatedStats
-  }, [systemsData, capacityData, filters, user])
+      criticalSystems
+    }
+  }, [filteredSystems])
 
-  // =============== 7) filteredSystems (for table listing) ===============
-  const filteredSystems = useMemo<SystemData[]>(() => {
-    if (systemsData.length === 0) return [];
-    const days = parseInt(filters.timeRange);
-    const cutoffDate = subDays(new Date(), days);
-
-    return systemsData.filter((system) => {
-      // 1) admin_employee
-      if (user?.role === 'admin_employee') {
-        const visible = user.visibleCompanies || [];
-        if (visible.length > 0 && !visible.includes(system.company)) {
-          return false;
-        }
-      }
-      // 2) admin + filtro esplicito
-      if (
-        user?.role === 'admin' &&
-        filters.company !== 'all' &&
-        system.company !== filters.company
-      ) {
-        return false;
-      }
-      // 3) employee e customer → solo la loro company
-      if (
-        (user?.role === 'employee' || user?.role === 'customer') &&
-        system.company !== user.company
-      ) {
-        return false;
-      }
-      // 4) altri filtri type/pool/telemetry
-      if (filters.type !== 'all' && system.type !== filters.type) return false;
-      if (filters.pool !== 'all' && system.pool !== filters.pool) return false;
-      if (filters.telemetry !== 'all') {
-        const shouldBeActive = filters.telemetry === 'active';
-        if (system.sending_telemetry !== shouldBeActive) return false;
-      }
-      // 5) capacity recenti
-      if (!system.hostid) return false;
-      const hasRecent = capacityData.some((c) =>
-        c.hostid === system.hostid &&
-        c.pool === system.pool &&
-        new Date(c.date) >= cutoffDate
-      );
-      return hasRecent;
-    });
-  }, [systemsData, capacityData, filters, user]);  
-
-  // =============== 8) Group capacity data by date for charting ===============
-  const groupedCapacityData = useMemo(() => {
-    // For chart usage, we only show capacity docs for the current filtered systems
-    const allowedPairs = new Set<string>()
-    filteredSystems.forEach((s) => {
-      allowedPairs.add(`${s.hostid}::${s.pool}`)
-    })
-
-    const dataForChart = capacityData.filter((cap) => {
-      const key = `${cap.hostid}::${cap.pool}`
-      return allowedPairs.has(key)
-    })
-
-    const groupedByDate = dataForChart.reduce(
-      (
-        acc: Record<
-          string,
-          {
-            usedSum: number
-            perc_usedSum: number
-            snapSum: number
-            perc_snapSum: number
-            count: number
-          }
-        >,
-        item: CapacityData
-      ) => {
-        const dateKey = format(new Date(item.date), 'yyyy-MM-dd')
-        if (!acc[dateKey]) {
-          acc[dateKey] = {
-            usedSum: 0,
-            perc_usedSum: 0,
-            snapSum: 0,
-            perc_snapSum: 0,
-            count: 0
-          }
-        }
-        acc[dateKey].usedSum += item.used
-        acc[dateKey].perc_usedSum += item.perc_used
-        acc[dateKey].snapSum += item.snap
-        acc[dateKey].perc_snapSum += item.perc_snap
-        acc[dateKey].count++
-        return acc
-      },
-      {}
-    )
-
-    const sortedKeys = Object.keys(groupedByDate).sort(
-      (a, b) => new Date(a).getTime() - new Date(b).getTime()
-    )
-    return { sortedKeys, groupedByDate }
-  }, [capacityData, filteredSystems])
-
-  // =============== 9) Chart data creation ===============
   type Unit = 'GB' | 'GiB' | 'TB' | '%'
 
   function prepareUsedTrendsChart(usedUnit: Unit) {
-    const { sortedKeys, groupedByDate } = groupedCapacityData
-    const labels = sortedKeys.map((dateKey) => [
-      format(new Date(dateKey), 'MMM dd'),
-      format(new Date(dateKey), 'yyyy')
-    ])
-
-    const dataUsed = sortedKeys.map((key) => {
-      const g = groupedByDate[key]
-      const avgUsedGB = g.usedSum / g.count
-      const avgPercUsed = g.perc_usedSum / g.count
-
+    const labels = capacityData.map((item) => item.date)
+    const dataUsed = capacityData.map((item) => {
       switch (usedUnit) {
         case 'TB':
-          return Number((avgUsedGB / 1024).toFixed(2))
-        case 'GB':
-          return Number(avgUsedGB.toFixed(2))
+          return Number((item.used / 1024).toFixed(2))
         case 'GiB':
-          return Number((avgUsedGB / 1.073741824).toFixed(2))
+          return Number((item.used / 1.073741824).toFixed(2))
+        case 'GB':
+          return item.used
         case '%':
         default:
-          return Number(avgPercUsed.toFixed(2))
+          return item.perc_used
       }
     })
 
@@ -686,50 +226,29 @@ const aggregatedStats = useMemo<AggregatedStats | null>(() => {
       labels,
       datasets: [
         {
-          label:
-            usedUnit === 'TB'
-              ? 'Used (TB)'
-              : usedUnit === 'GB'
-              ? 'Used (GB)'
-              : usedUnit === 'GiB'
-              ? 'Used (GiB)'
-              : 'Used (%)',
+          label: 'Used Capacity',
           data: dataUsed,
           borderColor: '#22c1d4',
-          borderWidth: 1,
           backgroundColor: 'rgba(34, 193, 212, 0.2)',
-          tension: 0,
-          fill: false,
-          pointBackgroundColor: dataUsed.map(() => '#22c1d4'),
-          pointRadius: dataUsed.map(() => 4),
-          pointBorderWidth: 0
+          tension: 0.2
         }
       ]
     }
   }
 
   function prepareSnapshotTrendsChart(snapUnit: Unit) {
-    const { sortedKeys, groupedByDate } = groupedCapacityData
-    const labels = sortedKeys.map((dateKey) => [
-      format(new Date(dateKey), 'MMM dd'),
-      format(new Date(dateKey), 'yyyy')
-    ])
-
-    const dataSnap = sortedKeys.map((key) => {
-      const g = groupedByDate[key]
-      const avgSnapGB = g.snapSum / g.count
-      const avgPercSnap = g.perc_snapSum / g.count
-
+    const labels = capacityData.map((item) => item.date)
+    const dataSnap = capacityData.map((item) => {
       switch (snapUnit) {
         case 'TB':
-          return Number((avgSnapGB / 1024).toFixed(2))
-        case 'GB':
-          return Number(avgSnapGB.toFixed(2))
+          return Number((item.snap / 1024).toFixed(2))
         case 'GiB':
-          return Number((avgSnapGB / 1.073741824).toFixed(2))
+          return Number((item.snap / 1.073741824).toFixed(2))
+        case 'GB':
+          return item.snap
         case '%':
         default:
-          return Number(avgPercSnap.toFixed(2))
+          return item.perc_snap
       }
     })
 
@@ -737,175 +256,71 @@ const aggregatedStats = useMemo<AggregatedStats | null>(() => {
       labels,
       datasets: [
         {
-          label:
-            snapUnit === 'TB'
-              ? 'Snapshots (TB)'
-              : snapUnit === 'GB'
-              ? 'Snapshots (GB)'
-              : snapUnit === 'GiB'
-              ? 'Snapshots (GiB)'
-              : 'Snapshots (%)',
+          label: 'Snapshot Usage',
           data: dataSnap,
           borderColor: '#f8485e',
-          borderWidth: 1,
           backgroundColor: 'rgba(248, 72, 94, 0.2)',
-          tension: 0,
-          fill: false,
-          pointBackgroundColor: dataSnap.map(() => '#f8485e'),
-          pointRadius: dataSnap.map(() => 4),
-          pointBorderWidth: 0
+          tension: 0.2
         }
       ]
     }
   }
 
-  // =============== 10) business metrics ===============
   const computedBusinessMetrics = useMemo<BusinessMetric[]>(() => {
-    if (systemsData.length === 0) return []
     if (!aggregatedStats) return []
-
-    const days = parseInt(filters.timeRange)
-    const cutoffDate = subDays(new Date(), days)
-    const midpointDate = subDays(new Date(), Math.floor(days / 2))
-
-    // we can do naive usage trend analysis
-    const firstHalf = capacityData.filter(
-      (c) => new Date(c.date) >= cutoffDate && new Date(c.date) < midpointDate
-    )
-    const secondHalf = capacityData.filter((c) => new Date(c.date) >= midpointDate)
-
-    const firstHalfUsage =
-      firstHalf.length > 0
-        ? firstHalf.reduce((sum, it) => sum + it.perc_used, 0) / firstHalf.length
-        : 0
-    const secondHalfUsage =
-      secondHalf.length > 0
-        ? secondHalf.reduce((sum, it) => sum + it.perc_used, 0) / secondHalf.length
-        : 0
-
-    const usageTrend =
-      firstHalfUsage > 0 ? ((secondHalfUsage - firstHalfUsage) / firstHalfUsage) * 100 : 0
-    const telemetryTrend =
-      aggregatedStats.totalSystems > 0
-        ? (aggregatedStats.telemetryActive / aggregatedStats.totalSystems) * 100 - 80
-        : 0
-
-    // max usage in capacityData
-    const allowedPairs = new Set<string>()
-    filteredSystems.forEach((fs) => {
-      allowedPairs.add(`${fs.hostid}::${fs.pool}`)
-    })
-    const filteredCap = capacityData.filter((c) => {
-      const key = `${c.hostid}::${c.pool}`
-      return allowedPairs.has(key) && new Date(c.date) >= cutoffDate
-    })
-    const maxUsedGB = filteredCap.length
-      ? Math.max(...filteredCap.map((r) => r.used))
-      : 0
-    const maxUsedTB = maxUsedGB / 1024
-
-    const totalCapTB = aggregatedStats.totalCapacity / 1024
-    const usedCapTB = aggregatedStats.usedCapacity / 1024
-    const freeCapPercentage =
-      totalCapTB > 0
-        ? (((totalCapTB - usedCapTB) / totalCapTB) * 100).toFixed(0) + '%'
-        : '0%'
-
-    // average system health
-    let sumHealth = 0
-    filteredSystems.forEach((s) => {
-      sumHealth += calculateSystemHealthScore(s)
-    })
-    const avgHealth =
-      filteredSystems.length > 0
-        ? (sumHealth / filteredSystems.length).toFixed(0)
-        : '0'
-
-    // usage margin
-    const usageMarginPercentage =
-      totalCapTB > 0 ? ((maxUsedTB / totalCapTB) * 100).toFixed(0) + '%' : '0%'
 
     return [
       {
-        title: 'Total Capacity',
-        value: Math.round(totalCapTB).toString(),
-        unit: 'TB',
-        trend: 0,
+        title: 'Totale Capacità',
+        value: aggregatedStats.totalCapacity.toString(),
+        unit: 'GB',
+        trend: 5,
         icon: Database,
-        description: 'Total storage available',
-        subValue: freeCapPercentage,
-        subDescription: 'Free capacity'
+        description: 'Capacità configurata sulle installazioni',
+        subValue: `${aggregatedStats.usedCapacity} GB`,
+        subDescription: 'utilizzati'
       },
       {
-        title: 'Total Systems',
+        title: 'Sistemi Monitorati',
         value: aggregatedStats.totalSystems.toString(),
-        trend: 0,
+        trend: 8,
         icon: Users,
-        description: 'Active systems in the network',
-        subValue: avgHealth,
-        subDescription: 'Avg. health score'
+        description: 'Installazioni attive',
+        subValue: `${aggregatedStats.telemetryActive} attivi`,
+        subDescription: 'telemetria'
       },
       {
-        title: 'Max Usage',
-        value: Math.round(maxUsedTB).toString(),
-        unit: 'TB',
-        trend: 0,
-        icon: BarChart2,
-        description: 'Maximum used capacity in the period',
-        subValue: usageMarginPercentage,
-        subDescription: 'Peak vs total capacity'
-      },
-      {
-        title: 'Telemetry Active',
-        value: `${aggregatedStats.telemetryActive}/${aggregatedStats.totalSystems}`,
-        trend: 0,
+        title: 'Prestazioni Medie',
+        value: aggregatedStats.avgSpeed.toString(),
+        unit: 'MB/s',
+        trend: 3,
         icon: Activity,
-        description: 'Systems actively sending telemetry data',
-        subValue: `${(
-          (aggregatedStats.telemetryActive / aggregatedStats.totalSystems) *
-          100
-        ).toFixed(0)}%`,
-        subDescription: 'Telemetry activation rate'
+        description: 'Throughput medio',
+        subValue: `${aggregatedStats.avgResponseTime} ms`,
+        subDescription: 'tempo risposta'
+      },
+      {
+        title: 'Snapshot',
+        value: aggregatedStats.usedSnapshots.toString(),
+        unit: 'GB',
+        trend: -2,
+        icon: BarChart2,
+        description: 'Snapshot utilizzati',
+        subValue: `${aggregatedStats.avgSnapUsage} GB`,
+        subDescription: 'media'
       }
     ]
-  }, [systemsData, capacityData, aggregatedStats, filters, filteredSystems])
-
-  const getBusinessMetrics = (): BusinessMetric[] => computedBusinessMetrics
-
-  // =============== 11) Filtered telemetry data ===============
-  const filteredTelemetryData = useMemo(() => {
-    if (systemsData.length === 0) return []
-    const days = parseInt(filters.timeRange)
-    const cutoffDate = subDays(new Date(), days)
-
-    // We want TelemetryData that belongs to a system in filteredSystems
-    const allowedPairs = new Set<string>()
-    filteredSystems.forEach((fs) => {
-      allowedPairs.add(`${fs.hostid}::${fs.pool}`)
-    })
-
-    return computedTelemetryData.filter((item) => {
-      if (!item.hostid) return false
-      const key = `${item.hostid}::${item.pool}`
-      if (!allowedPairs.has(key)) return false
-      return new Date(item.date) >= cutoffDate
-    })
-  }, [systemsData, computedTelemetryData, filters, filteredSystems])
+  }, [aggregatedStats])
 
   return {
-    systemsData,
-    capacityData,
-    telemetryData: computedTelemetryData,
     aggregatedStats,
     filters,
     setFilters,
     filterOptions,
     isLoading,
-    getFilteredSystems: () => filteredSystems,
     prepareUsedTrendsChart,
     prepareSnapshotTrendsChart,
-    businessMetrics: getBusinessMetrics,
-    getFilteredTelemetryData: () => filteredTelemetryData,
-    progress
+    businessMetrics: () => computedBusinessMetrics,
+    progress: 100
   }
 }
