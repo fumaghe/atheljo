@@ -1,272 +1,112 @@
 // src/pages/Systems/EnergyConsumptionImpact.tsx
 import 'chart.js/auto';
-import 'chartjs-adapter-date-fns';
-
-import React, { useEffect, useMemo, useState } from 'react';
-import { collection, query, where, getDocs } from 'firebase/firestore';
+import React, { useEffect, useState } from 'react';
 import { Line } from 'react-chartjs-2';
-import { subDays } from 'date-fns';
 import { Zap, Cloud, Leaf } from 'lucide-react';
-import firestore from '../../firebaseClient';
-
-/* ─────────────────── tipizzazioni ─────────────────── */
-interface EnergySample {
-  date: string;          // ISO YYYY-MM-DD
-  hostid: string;
-  pool: string;
-  unit_id?: string;
-  kwh_consumed: number;  // valore in kWh
-  co2_emissions: number; // valore in kg CO₂
-}
+import { getSystemByUnitId } from '../../utils/mockData';
 
 type Range = '1w' | '1m' | '3m' | '1y' | 'all';
 const rangeMap: Record<Exclude<Range, 'all'>, number> = {
   '1w': 7,
   '1m': 30,
   '3m': 90,
-  '1y': 365
+  '1y': 365,
 };
 
-const EMISSION_FACTOR = 0.32; // kg CO₂ per kWh
-const KWH_THRESHOLD   = 300;  // soglia alert consumo medio (in kWh)
-const CO2_THRESHOLD   = 100;  // soglia alert emissioni medie (in kg CO₂)
-
-/* ─────────────────── componente principale ─────────────────── */
-export default function EnergyConsumptionImpact({
-  hostId,
-  pool
-}: {
-  hostId: string;
-  pool: string;
-}) {
-  const [samples, setSamples]       = useState<EnergySample[]>([]);
-  const [timeRange, setTimeRange]   = useState<Range>('1m');
-  const [isLoading, setIsLoading]   = useState(true);
-
-  /* ───── fetch Firestore ───── */
-  useEffect(() => {
-    (async () => {
-      setIsLoading(true);
-
-      const q = query(
-        collection(firestore, 'energy_trends'),
-        where('hostid', '==', hostId),
-        where('pool',   '==', pool)
-      );
-      const snap = await getDocs(q);
-      const loaded: EnergySample[] = [];
-
-      snap.forEach(d => {
-        const data = d.data();
-
-        // Il campo data.kwh_consumed è in Wh: lo convertiamo in kWh
-        const whRaw = Number(data.kwh_consumed);   // valore in Wh (ad es. 270 ... 900 Wh)
-        const kwh   = whRaw / 1000;                // ora è in kWh (0.27 ... 0.9 kWh)
-
-        // Calcoliamo sempre le emissioni a partire dal kWh corretto
-        const co2 = +((kwh * EMISSION_FACTOR).toFixed(3)); // in kg CO₂
-
-        loaded.push({
-          date: data.date,
-          hostid: data.hostid,
-          pool: data.pool,
-          unit_id: data.unit_id,
-          kwh_consumed: +kwh.toFixed(3),
-          co2_emissions: co2
-        });
-      });
-
-      loaded.sort(
-        (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()
-      );
-      setSamples(loaded);
-      setIsLoading(false);
-    })();
-  }, [hostId, pool]);
-
-  /* ───── filtro per intervallo ───── */
-  const filtered = useMemo(() => {
-    if (timeRange === 'all') return samples;
-    const cutoff = subDays(new Date(), rangeMap[timeRange]);
-    return samples.filter(s => new Date(s.date) >= cutoff);
-  }, [samples, timeRange]);
-
-  /* ───── metriche chiave ───── */
-  const daysCount = filtered.length;
-  const sumKwh    = filtered.reduce((acc, s) => acc + s.kwh_consumed, 0);
-  const avgKwh    = daysCount ? +(sumKwh / daysCount).toFixed(1) : 0;
-  const avgCo2    = +(avgKwh * EMISSION_FACTOR).toFixed(1);
-
-  /* ───── configurazione grafico ───── */
-  const chartData = {
-    datasets: [
-      {
-        label: 'kWh',
-        data: filtered.map(s => ({ x: s.date, y: s.kwh_consumed })),
-        borderColor: '#38BDF8',
-        backgroundColor: 'rgba(56,189,248,0.15)',
-        tension: 0.2,
-        pointRadius: 0,
-        fill: true
-      },
-      {
-        label: 'kg CO₂',
-        data: filtered.map(s => ({ x: s.date, y: s.co2_emissions })),
-        borderColor: '#10B981',
-        backgroundColor: 'rgba(16,185,129,0.15)',
-        tension: 0.2,
-        pointRadius: 0,
-        fill: true,
-        yAxisID: 'y2'
-      }
-    ]
-  };
-
-  const chartOptions = {
-    responsive: true,
-    maintainAspectRatio: false,
-    scales: {
-      y: {
-        grid: { color: 'rgba(255,255,255,0.1)' },
-        ticks: { color: '#fff' }
-      },
-      y2: {
-        position: 'right' as const,
-        grid: { drawOnChartArea: false },
-        ticks: { color: '#fff' }
-      },
-      x: {
-        type: 'time' as const,
-        time: { unit: 'day' as const },
-        grid: { color: 'rgba(255,255,255,0.1)' },
-        ticks: { color: '#fff' }
-      }
-    },
-    plugins: {
-      legend: { position: 'top' as const, labels: { color: '#fff' } },
-      tooltip: {
-        mode: 'index' as const,
-        intersect: false,
-        backgroundColor: '#06272b',
-        titleColor: '#F3F4F6',
-        bodyColor: '#F3F4F6',
-        borderColor: '#38BDF8',
-        borderWidth: 1,
-        padding: 12,
-        callbacks: {
-          label: (ctx: any) =>
-            ctx.dataset.label === 'kWh'
-              ? `Consumo: ${ctx.parsed.y} kWh`
-              : `CO₂: ${ctx.parsed.y} kg`
-        }
-      }
-    },
-    interaction: { intersect: false, mode: 'index' as const }
-  };
-
-  /* ───── rendering condizionale ───── */
-  if (isLoading) {
-    return (
-      <div className="h-[300px] flex items-center justify-center">
-        Loading…
-      </div>
-    );
-  }
-
-  if (!filtered.length) {
-    return (
-      <div className="h-[20px] flex items-center justify-center">
-        No data.
-      </div>
-    );
-  }
-
-  const kwhAlert = avgKwh > KWH_THRESHOLD;
-  const co2Alert = avgCo2 > CO2_THRESHOLD;
-
-  return (
-    <div className="space-y-6 animate-fade-in">
-      {/* ——— HEADER ——— */}
-      <div className="flex items-center gap-2">
-        <Leaf className="w-6 h-6" style={{ color: '#10B981' }} aria-label="Icona foglia – sostenibilità" />
-        <h2 className="text-xl font-semibold" style={{ color: '#F3F4F6' }}>
-          Energy Consumption & CO₂ Impact
-        </h2>
-      </div>
-
-      {/* ——— METRIC CARDS ——— */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        <MetricCard
-          title="Avg Daily Consumption"
-          value={`${avgKwh} kWh`}
-          icon={Zap}
-          color="#38BDF8"
-          alert={kwhAlert}
-        />
-        <MetricCard
-          title="Avg Daily CO₂ Emissions"
-          value={`${avgCo2} kg CO₂`}
-          icon={Cloud}
-          color="#10B981"
-          alert={co2Alert}
-        />
-      </div>
-
-      {/* ——— CONTROLLI RANGE ——— */}
-      <div className="flex gap-3">
-        <select
-          value={timeRange}
-          onChange={e => setTimeRange(e.target.value as Range)}
-          className="bg-[#06272b] text-[#eeeeee] rounded px-3 py-1 border border-[#22c1d4]/20"
-        >
-          <option value="1w">Last week</option>
-          <option value="1m">Last month</option>
-          <option value="3m">Last 3 months</option>
-          <option value="1y">Last year</option>
-          <option value="all">All</option>
-        </select>
-      </div>
-
-      {/* ——— GRAFICO ——— */}
-      <div className="h-[300px]">
-        <Line data={chartData} options={chartOptions} />
-      </div>
-    </div>
-  );
+interface EnergyPoint {
+  month: string;
+  baseline_kwh: number;
+  optimized_kwh: number;
 }
 
-/* ────────── sottocomponente card ────────── */
-function MetricCard({
-  title,
-  value,
-  icon: Icon,
-  color,
-  alert
-}: {
-  title: string;
-  value: string;
-  icon: React.ElementType;
-  color: string;
-  alert: boolean;
-}) {
+export default function EnergyConsumptionImpact({ unitId }: { unitId?: string }) {
+  const [dataPoints, setDataPoints] = useState<EnergyPoint[]>([]);
+  const [timeRange, setTimeRange] = useState<Range>('3m');
+
+  useEffect(() => {
+    const system = getSystemByUnitId(unitId || 'unit-001');
+    if (system) {
+      setDataPoints(system.energyImpact.map(point => ({
+        month: point.month,
+        baseline_kwh: point.baseline,
+        optimized_kwh: point.optimized,
+      })));
+    }
+  }, [unitId]);
+
+  const limitedPoints = dataPoints.slice(-rangeMap[timeRange as Exclude<Range, 'all'>] / 30 || undefined);
+  const chartData = {
+    labels: limitedPoints.map(p => p.month),
+    datasets: [
+      {
+        label: 'Baseline (kWh)',
+        data: limitedPoints.map(p => p.baseline_kwh),
+        borderColor: '#f8485e',
+        backgroundColor: 'rgba(248,72,94,0.2)',
+        fill: true,
+        tension: 0.25,
+      },
+      {
+        label: 'Ottimizzato (kWh)',
+        data: limitedPoints.map(p => p.optimized_kwh),
+        borderColor: '#22c1d4',
+        backgroundColor: 'rgba(34,193,212,0.2)',
+        fill: true,
+        tension: 0.25,
+      },
+    ],
+  };
+
+  const baselineAvg = limitedPoints.reduce((s, p) => s + p.baseline_kwh, 0) / Math.max(limitedPoints.length, 1);
+  const optimizedAvg = limitedPoints.reduce((s, p) => s + p.optimized_kwh, 0) / Math.max(limitedPoints.length, 1);
+
   return (
-    <div
-      className="p-4 rounded-lg flex items-center justify-between transition-colors"
-      style={{
-        background: '#06272b',
-        border: `1px solid ${alert ? '#EF4444' : 'rgba(255,255,255,0.1)'}`,
-        minHeight: '88px'
-      }}
-    >
-      <div>
-        <p className="text-sm" style={{ color: '#D1D5DB' }}>
-          {title}
-        </p>
-        <p className="text-2xl font-bold" style={{ color: '#F3F4F6' }}>
-          {value}
-        </p>
+    <div className="bg-[#0b3c43] rounded-lg p-4">
+      <div className="flex items-center justify-between mb-3">
+        <div>
+          <h3 className="text-lg font-semibold">Energy consumption impact</h3>
+          <p className="text-sm text-[#eeeeee]/70">Dati dimostrativi senza backend</p>
+        </div>
+        <div className="flex gap-2 text-sm">
+          {(['1w', '1m', '3m', '1y'] as Range[]).map(range => (
+            <button
+              key={range}
+              onClick={() => setTimeRange(range)}
+              className={`px-3 py-1 rounded ${timeRange === range ? 'bg-[#22c1d4] text-[#06272b]' : 'bg-[#06272b] text-white'}`}
+            >
+              {range.toUpperCase()}
+            </button>
+          ))}
+        </div>
       </div>
-      <Icon className="w-6 h-6" style={{ color }} />
+
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
+        <div className="bg-[#06272b] rounded p-3 flex items-center gap-2">
+          <Zap className="w-5 h-5 text-[#22c1d4]" />
+          <div>
+            <div className="text-xl font-semibold">{baselineAvg.toFixed(1)} kWh</div>
+            <div className="text-xs text-[#eeeeee]/60">Baseline media</div>
+          </div>
+        </div>
+        <div className="bg-[#06272b] rounded p-3 flex items-center gap-2">
+          <Leaf className="w-5 h-5 text-[#22c1d4]" />
+          <div>
+            <div className="text-xl font-semibold">{optimizedAvg.toFixed(1)} kWh</div>
+            <div className="text-xs text-[#eeeeee]/60">Ottimizzato</div>
+          </div>
+        </div>
+        <div className="bg-[#06272b] rounded p-3 flex items-center gap-2">
+          <Cloud className="w-5 h-5 text-[#22c1d4]" />
+          <div>
+            <div className="text-xl font-semibold">{((baselineAvg - optimizedAvg) * 0.32).toFixed(1)} kg</div>
+            <div className="text-xs text-[#eeeeee]/60">CO₂ evitata (stima)</div>
+          </div>
+        </div>
+      </div>
+
+      <div className="h-[300px]">
+        <Line data={chartData} options={{ responsive: true, maintainAspectRatio: false }} />
+      </div>
     </div>
   );
 }

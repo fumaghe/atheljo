@@ -23,6 +23,7 @@ import 'react-datepicker/dist/react-datepicker.css';
 import Select from 'react-select';
 import { Navigate } from 'react-router-dom';
 import NoPermission from '../../pages/NoPermission';
+import { dummyEmployees, dummyPermissions } from '../../utils/mockData';
 
 // Interface for a permission item
 interface PermissionItem {
@@ -541,7 +542,7 @@ const EmployeeWizard: React.FC<EmployeeWizardProps> = ({
 // ManageEmployees Component (Main)
 // ============================
 const ManageEmployees: React.FC = () => {
-  const { user, getUsers, addUser, updateUser, deleteUser, isAuthenticated, isInitializingSession } = useAuth();
+  const { user, isAuthenticated, isInitializingSession } = useAuth();
 
   if (isInitializingSession) {
     return (
@@ -567,70 +568,12 @@ const ManageEmployees: React.FC = () => {
   // Fetch employees
   useEffect(() => {
     if (!user) return;
-    getUsers().then(allUsers => {
-      const filtered = allUsers.filter(u =>
-        (u.role === 'employee' || u.role === 'admin_employee') &&
-        u.parentCustomerId === user!.id
-      );
-      setEmployees(filtered);
-    });
-  }, [getUsers, user]);
-
-  // Fetch permissions from the backend
-  useEffect(() => {
-    const fetchPermissions = async () => {
-      try {
-        const API_BASE = import.meta.env.VITE_API_BASE || '/api';
-        const res = await fetch(`${API_BASE}/subscription-permissions`);
-        if (!res.ok) {
-          console.error('Error fetching subscription permissions');
-          return;
-        }
-        const allPermissions = await res.json();
-        const customerSubscription = user!.subscription || 'None';
-
-        // Also consider permissions with "blur" level
-        const filtered: PermissionItem[] = allPermissions
-          .filter((sp: any) => {
-            if (customerSubscription === 'None') return false;
-            const permLevel = sp.permissions[customerSubscription];
-            return permLevel === 'full' || permLevel === 'blur';
-          })
-          .map((sp: any) => ({
-            id: `${sp.page}__${sp.component}`,
-            page: sp.page,
-            component: sp.component
-          }));
-
-        setAllowedPermissions(filtered);
-      } catch (error) {
-        console.error('Error fetching permissions:', error);
-      }
-    };
-
-    if (user) {
-      fetchPermissions();
-    }
+    setEmployees(prev => prev.length ? prev : dummyEmployees.filter(emp => emp.parentCustomerId === 'cust-001'));
   }, [user]);
 
-  // Fetch companies from the backend
   useEffect(() => {
-    const fetchCompanies = async () => {
-      try {
-        const API_BASE = import.meta.env.VITE_API_BASE || '/api';
-        const res = await fetch(`${API_BASE}/companies`);
-        if (res.ok) {
-          const companies = await res.json();
-          setAvailableCompanies(companies);
-        } else {
-          console.error('Failed to load companies.');
-        }
-      } catch (error) {
-        console.error('Error loading companies:', error);
-      }
-    };
-
-    fetchCompanies();
+    setAllowedPermissions(dummyPermissions);
+    setAvailableCompanies(['Acme Storage', 'Northwind Data', 'Globex Labs']);
   }, []);
 
   // Group permissions by page
@@ -652,14 +595,17 @@ const ManageEmployees: React.FC = () => {
       alert('Please fill in the required fields (username, password).');
       return;
     }
-    const createdEmp = await addUser(newEmp as User);
-    if (createdEmp) {
-      setEmployees(prev => [...prev, createdEmp]);
-      setIsAddingEmployee(false);
-      setEditingEmployee(null);
-    } else {
-      alert('Employee creation failed.');
-    }
+    const createdEmp: User = {
+      ...(newEmp as User),
+      id: `emp-${Date.now()}`,
+      parentCustomerId: user!.id,
+      subscription: user!.subscription,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+    setEmployees(prev => [...prev, createdEmp]);
+    setIsAddingEmployee(false);
+    setEditingEmployee(null);
   };
 
   // Handler to update an employee
@@ -671,21 +617,19 @@ const ManageEmployees: React.FC = () => {
     updatedEmp.permissions = updatedEmp.permissions?.map((p: any) =>
       typeof p === 'object' ? p.id : p
     ) || [];
-    const updated = await updateUser(updatedEmp.id, updatedEmp);
-    if (updated) {
-      setEmployees(prev => prev.map(u => (u.id === updatedEmp.id ? updated : u)));
-      setEditingEmployee(null);
-      setIsAddingEmployee(false);
-    }
+    setEmployees(prev => prev.map(u => (
+      u.id === updatedEmp.id
+        ? { ...u, ...updatedEmp, updatedAt: new Date().toISOString() } as User
+        : u
+    )));
+    setEditingEmployee(null);
+    setIsAddingEmployee(false);
   };
 
   // Handler to delete an employee
   const handleDeleteEmployee = async (id: string) => {
     if (window.confirm('Are you sure you want to delete this employee?')) {
-      const deleted = await deleteUser(id);
-      if (deleted) {
-        setEmployees(prev => prev.filter(u => u.id !== id));
-      }
+      setEmployees(prev => prev.filter(u => u.id !== id));
     }
   };
 

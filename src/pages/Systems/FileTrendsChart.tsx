@@ -2,105 +2,54 @@
 import 'chart.js/auto';
 import 'chartjs-adapter-date-fns';
 
-import React, { useEffect, useState, useMemo } from 'react';
-import { collection, query, where, getDocs } from 'firebase/firestore';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Line, Bar } from 'react-chartjs-2';
 import { subDays } from 'date-fns';
-import {
-  FilePlus,
-  FileMinus,
-  Layers
-} from 'lucide-react';                       // icone per le card
-import firestore from '../../firebaseClient';
+import { FilePlus, FileMinus, Layers } from 'lucide-react';
+import { getSystemByUnitId } from '../../utils/mockData';
 
 interface FileTrend {
   date: string;
-  hostid: string;
-  pool: string;
-  unit_id: string;
-  total_files: number;
   uploaded: number;
   deleted: number;
+  total_files: number;
 }
 
 type Range = '1w' | '1m' | '3m' | '1y' | 'all';
-
 const rangeMap: Record<Exclude<Range, 'all'>, number> = {
   '1w': 7,
   '1m': 30,
   '3m': 90,
-  '1y': 365
+  '1y': 365,
 };
 
-export default function FileTrendsChart({
-  hostId,
-  pool
-}: {
-  hostId: string;
-  pool: string;
-}) {
-  const [allTrends, setAllTrends]   = useState<FileTrend[]>([]);
-  const [timeRange, setTimeRange]   = useState<Range>('1y');
-  const [view, setView]             = useState<'total' | 'delta'>('total');
-  const [isLoading, setIsLoading]   = useState(true);
+export default function FileTrendsChart({ unitId }: { unitId?: string }) {
+  const [allTrends, setAllTrends] = useState<FileTrend[]>([]);
+  const [timeRange, setTimeRange] = useState<Range>('1y');
+  const [view, setView] = useState<'total' | 'delta'>('total');
 
-  /* ───────────────────────────── fetch ─────────────────────────────── */
   useEffect(() => {
-    (async () => {
-      setIsLoading(true);
-      const q = query(
-        collection(firestore, 'file_trends'),
-        where('hostid', '==', hostId),
-        where('pool', '==', pool)
-      );
-      const snap = await getDocs(q);
-      const loaded: FileTrend[] = [];
-      snap.forEach((doc) => {
-        const d = doc.data();
-        loaded.push({
-          date: d.telemetry_sent.replace(' ', 'T'),
-          hostid: d.hostid,
-          pool: d.pool,
-          unit_id: d.unit_id,
-          total_files: Number(d.total_files),
-          uploaded: Number(d.uploaded),
-          deleted: Number(d.deleted)
-        });
-      });
-      loaded.sort(
-        (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()
-      );
-      setAllTrends(loaded);
-      setIsLoading(false);
-    })();
-  }, [hostId, pool]);
+    const system = getSystemByUnitId(unitId || 'unit-001');
+    if (system) {
+      setAllTrends(system.fileTrends);
+    }
+  }, [unitId]);
 
-  /* ─────────────────────── filtro range & metriche ─────────────────── */
   const filtered = useMemo(() => {
     if (timeRange === 'all') return allTrends;
     const cutoff = subDays(new Date(), rangeMap[timeRange]);
-    return allTrends.filter(
-      (t) => new Date(t.date).getTime() >= cutoff.getTime()
-    );
+    return allTrends.filter(t => new Date(t.date).getTime() >= cutoff.getTime());
   }, [allTrends, timeRange]);
 
-  /* metriche per le card */
   const totalUploaded = filtered.reduce((acc, p) => acc + p.uploaded, 0);
   const totalDeleted  = filtered.reduce((acc, p) => acc + p.deleted, 0);
-  const lastTotal     =
-    filtered.length > 0 ? filtered[filtered.length - 1].total_files : 0;
+  const lastTotal     = filtered.length > 0 ? filtered[filtered.length - 1].total_files : 0;
 
-  /* ─────────────────────────── states UI ───────────────────────────── */
-  if (isLoading)
-    return (
-      <div className="h-[300px] flex items-center justify-center">Loading…</div>
-    );
   if (!filtered.length)
     return (
       <div className="h-[20px] flex items-center justify-center">No data</div>
     );
 
-  /* ─────────────────────────── datasets ────────────────────────────── */
   const totalData = {
     datasets: [
       {
@@ -120,149 +69,126 @@ export default function FileTrendsChart({
       {
         label: 'Uploaded',
         data: filtered.map((p) => ({ x: p.date, y: p.uploaded })),
-        backgroundColor: 'rgba(34,193,212,0.6)',
         borderColor: '#22c1d4',
-        stack: 'stack0'
+        backgroundColor: 'rgba(34,193,212,0.2)',
+        tension: 0.2,
+        pointRadius: 0
       },
       {
         label: 'Deleted',
-        data: filtered.map((p) => ({ x: p.date, y: -p.deleted })),
-        backgroundColor: 'rgba(248,72,94,0.6)',
+        data: filtered.map((p) => ({ x: p.date, y: p.deleted })),
         borderColor: '#f8485e',
-        stack: 'stack0'
+        backgroundColor: 'rgba(248,72,94,0.2)',
+        tension: 0.2,
+        pointRadius: 0
       }
     ]
   };
 
-  /* ───────────────────────── chart options ─────────────────────────── */
-  const commonOptions = {
-    responsive: true,
-    maintainAspectRatio: false,
-    scales: {
-      y: {
-        grid: { color: 'rgba(255,255,255,0.1)' },
-        ticks: { color: '#fff' }
-      },
-      x: {
-        type: 'time' as const,
-        time: { unit: 'day' as const },
-        grid: { color: 'rgba(255,255,255,0.1)' },
-        ticks: { color: '#fff' }
-      }
-    },
-    plugins: {
-      legend: { position: 'top' as const, labels: { color: '#fff' } },
-      tooltip: {
-        mode: 'index' as const,
-        intersect: false,
-        backgroundColor: '#0b3c43',
-        titleColor: '#fff',
-        bodyColor: '#fff',
-        borderColor: '#22c1d4',
-        borderWidth: 1,
-        padding: 12
-      }
-    },
-    interaction: { intersect: false, mode: 'index' as const }
-  };
-
-  /* ─────────────────────────── render ──────────────────────────────── */
   return (
-    <div>
-      {/* CARD METRICS */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">
-        <SummaryCard
-          title="Uploaded"
-          value={totalUploaded}
-          icon={FilePlus}
-          color="#22c1d4"
-        />
-        <SummaryCard
-          title="Deleted"
-          value={totalDeleted}
-          icon={FileMinus}
-          color="#f8485e"
-        />
-        <SummaryCard
-          title="Total files"
-          value={lastTotal}
-          icon={Layers}
-          color="#eeeeee"
-        />
-      </div>
-
-      {/* CONTROLS */}
-      <div className="flex items-center justify-between mb-4">
-        <div className="flex gap-3">
-          <select
-            value={timeRange}
-            onChange={(e) => setTimeRange(e.target.value as Range)}
-            className="bg-[#06272b] text-[#eeeeee] rounded px-3 py-1 border border-[#22c1d4]/20"
+    <div className="bg-[#0b3c43] rounded-lg p-4">
+      <div className="flex items-center justify-between mb-3">
+        <div className="text-lg font-semibold">File trends</div>
+        <div className="flex gap-2 text-sm">
+          {(['1w','1m','3m','1y'] as Range[]).map(range => (
+            <button
+              key={range}
+              onClick={() => setTimeRange(range)}
+              className={`px-3 py-1 rounded ${timeRange === range ? 'bg-[#22c1d4] text-[#06272b]' : 'bg-[#06272b] text-white'}`}
+            >
+              {range.toUpperCase()}
+            </button>
+          ))}
+          <button
+            onClick={() => setView(view === 'total' ? 'delta' : 'total')}
+            className="px-3 py-1 rounded bg-[#06272b] text-white"
           >
-            <option value="1w">Last week</option>
-            <option value="1m">Last month</option>
-            <option value="3m">Last 3 months</option>
-            <option value="1y">Last year</option>
-            <option value="all">All</option>
-          </select>
-
-          <select
-            value={view}
-            onChange={(e) => setView(e.target.value as 'total' | 'delta')}
-            className="bg-[#06272b] text-[#eeeeee] rounded px-3 py-1 border border-[#22c1d4]/20"
-          >
-            <option value="total">Total files</option>
-            <option value="delta">Uploaded / Deleted</option>
-          </select>
+            {view === 'total' ? 'Show delta' : 'Show total'}
+          </button>
         </div>
       </div>
 
-      {/* CHART */}
-      <div className="h-[300px]">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4 text-sm">
+        <div className="bg-[#06272b] rounded p-3 flex items-center gap-2">
+          <FilePlus className="w-4 h-4 text-[#22c1d4]" />
+          <div>
+            <div className="text-xl font-semibold">{totalUploaded}</div>
+            <div className="text-xs text-[#eeeeee]/60">File caricati</div>
+          </div>
+        </div>
+        <div className="bg-[#06272b] rounded p-3 flex items-center gap-2">
+          <FileMinus className="w-4 h-4 text-[#22c1d4]" />
+          <div>
+            <div className="text-xl font-semibold">{totalDeleted}</div>
+            <div className="text-xs text-[#eeeeee]/60">File rimossi</div>
+          </div>
+        </div>
+        <div className="bg-[#06272b] rounded p-3 flex items-center gap-2">
+          <Layers className="w-4 h-4 text-[#22c1d4]" />
+          <div>
+            <div className="text-xl font-semibold">{lastTotal}</div>
+            <div className="text-xs text-[#eeeeee]/60">Totale attuale</div>
+          </div>
+        </div>
+      </div>
+
+      <div className="h-[320px]">
         {view === 'total' ? (
-          <Line data={totalData} options={commonOptions} />
+          <Line
+            data={totalData}
+            options={{
+              responsive: true,
+              maintainAspectRatio: false,
+              scales: {
+                x: {
+                  type: 'time',
+                  time: { unit: 'month' },
+                  ticks: { color: '#eeeeee' },
+                  grid: { color: 'rgba(238,238,238,0.1)' }
+                },
+                y: {
+                  beginAtZero: true,
+                  ticks: { color: '#eeeeee' },
+                  grid: { color: 'rgba(238,238,238,0.1)' }
+                }
+              },
+              plugins: {
+                legend: {
+                  labels: { color: '#eeeeee' }
+                }
+              }
+            }}
+          />
         ) : (
           <Bar
             data={deltaData}
             options={{
-              ...commonOptions,
+              responsive: true,
+              maintainAspectRatio: false,
               scales: {
-                ...commonOptions.scales,
-                y: { ...commonOptions.scales.y, stacked: true },
-                x: { ...commonOptions.scales.x, stacked: true }
+                x: {
+                  type: 'time',
+                  time: { unit: 'month' },
+                  stacked: true,
+                  ticks: { color: '#eeeeee' },
+                  grid: { color: 'rgba(238,238,238,0.1)' }
+                },
+                y: {
+                  stacked: true,
+                  beginAtZero: true,
+                  ticks: { color: '#eeeeee' },
+                  grid: { color: 'rgba(238,238,238,0.1)' }
+                }
+              },
+              plugins: {
+                legend: {
+                  labels: { color: '#eeeeee' }
+                }
               }
             }}
           />
         )}
       </div>
-    </div>
-  );
-}
-
-/* ╭────────────── summary card component ──────────────╮ */
-function SummaryCard({
-  title,
-  value,
-  icon: Icon,
-  color
-}: {
-  title: string;
-  value: number;
-  icon: React.ElementType;
-  color: string;
-}) {
-  return (
-    <div
-      className="p-4 rounded-lg bg-[#06272b] border border-[#22c1d4]/10 flex items-center justify-between"
-      style={{ minHeight: '88px' }}
-    >
-      <div>
-        <p className="text-sm text-[#eeeeee]/60">{title}</p>
-        <p className="text-2xl font-bold" style={{ color }}>
-          {value}
-        </p>
-      </div>
-      <Icon className="w-6 h-6" style={{ color }} />
     </div>
   );
 }
